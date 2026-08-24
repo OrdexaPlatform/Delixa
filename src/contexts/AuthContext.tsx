@@ -16,7 +16,7 @@ interface AuthContextType {
   session: AuthSession | null;
   loading: boolean;
   isConfigured: boolean;
-  registerCompany: (params: RegisterCompanyParams) => Promise<{ success: boolean; error?: string }>;
+  registerCompany: (params: RegisterCompanyParams) => Promise<{ success: boolean; error?: string; requiresEmailConfirmation?: boolean; message?: string }>;
   loginAdmin: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
   loginCourier: (employeeId: string, password?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
@@ -109,16 +109,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   // 1. Register new shipping company (Creates Auth User + Company Record + Admin Profile)
-  const registerCompany = async (params: RegisterCompanyParams): Promise<{ success: boolean; error?: string }> => {
+  const registerCompany = async (params: RegisterCompanyParams): Promise<{ success: boolean; error?: string; requiresEmailConfirmation?: boolean; message?: string }> => {
     try {
       if (!isSupabaseConfigured) {
-        return { success: false, error: 'يرجى ربط مفاتيح Supabase (VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY) لتسجيل الحسابات' };
+        return { success: false, error: 'يرجى ضبط مفاتيح Supabase (VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY) لتسجيل الحسابات' };
       }
 
       const email = params.email.trim().toLowerCase();
       const password = params.password;
 
-      // Step 1: Create Supabase Auth User
+      // Step 1: Create Supabase Auth User with metadata
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
@@ -127,51 +127,87 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             full_name: params.adminFullName.trim(),
             phone: params.phone.trim(),
             company_name: params.companyName.trim(),
+            address: params.address?.trim() || 'جمهورية مصر العربية',
           },
         },
       });
 
       if (authError) {
+        if (authError.message?.includes('already registered') || (authError as any).status === 422) {
+          return { success: false, error: 'هذا البريد الإلكتروني مسجل بالفعل. يرجى تسجيل الدخول أو استخدام بريد إلكتروني آخر.' };
+        }
         return { success: false, error: authError.message || 'فشل إنشاء المستخدم في Supabase Auth' };
       }
 
-      const authUser = authData.user;
+      const authUser = authData?.user;
       if (!authUser) {
-        return { success: false, error: 'تعذر الحصول على حساب المستخدم المسجل' };
+        return { success: false, error: 'تعذر إنشاء حساب المستخدم في Supabase Auth' };
       }
 
-      // Step 2: Create Company in Supabase
-      const company = await db.createCompany({
-        name: params.companyName.trim(),
-        phone: params.phone.trim(),
-        email,
-        address: params.address?.trim() || 'جمهورية مصر العربية',
-        logo_url: '',
-      });
+      // Check if email confirmation is required (session is null)
+      const hasImmediateSession = Boolean(authData.session);
 
-      // Step 3: Create Admin Profile in Supabase
-      const profile = await db.createProfile({
-        auth_user_id: authUser.id,
-        company_id: company.id,
-        full_name: params.adminFullName.trim(),
-        phone: params.phone.trim(),
-        role: 'admin',
-      });
+      // Step 2 & 3: Attempt to create Company & Profile in Supabase
+      try {
+        // Check if database trigger already created the profile
+        let profile = await db.getProfileByAuthUserId(authUser.id);
+        let company: Company | null = null;
 
-      // Step 4: Establish Session
-      const newSession: AuthSession = {
-        user: {
-          id: authUser.id,
-          email,
-        },
-        profile,
-        company,
-      };
+        if (profile) {
+          company = await db.getCompanyById(profile.company_id);
+        }
 
-      setSession(newSession);
+        // If not created by trigger, create company and profile directly
+        if (!company) {
+          company = await db.createCompany({
+            name: params.companyName.trim(),
+            phone: params.phone.trim(),
+            email,
+            address: params.address?.trim() || 'جمهورية مصر العربية',
+            logo_url: '',
+          });
+        }
+
+        if (!profile && company) {
+          profile = await db.createProfile({
+            auth_user_id: authUser.id,
+            company_id: company.id,
+            full_name: params.adminFullName.trim(),
+            phone: params.phone.trim(),
+            role: 'admin',
+          });
+        }
+
+        if (hasImmediateSession && profile && company) {
+          const newSession: AuthSession = {
+            user: {
+              id: authUser.id,
+              email,
+            },
+            profile,
+            company,
+          };
+          setSession(newSession);
+          return { success: true };
+        }
+      } catch (dbErr: any) {
+        console.warn('Direct company/profile insert notice during registration:', dbErr);
+        // If email confirmation is required, RLS may defer creation until first authenticated login
+      }
+
+      // If email confirmation is required by Supabase
+      if (!hasImmediateSession) {
+        return {
+          success: true,
+          requiresEmailConfirmation: true,
+          message: 'تم تسجيل حساب الشركة بنجاح! تم إرسال رابط تأكيد إلى بريدك الإلكتروني، يرجى تفعيل الحساب لتسجيل الدخول.',
+        };
+      }
+
       return { success: true };
     } catch (err: any) {
-      return { success: false, error: err.message || 'حدث خطأ أثناء تسجيل الشركة' };
+      console.error('Registration exception:', err);
+      return { success: false, error: err.message || 'حدث خطأ غير متوقع أثناء تسجيل الشركة' };
     }
   };
 
@@ -195,6 +231,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (authError || !authData.user) {
+        if (authError?.message?.includes('Email not confirmed') || (authError as any)?.code === 'email_not_confirmed') {
+          return { success: false, error: 'بريدك الإلكتروني غير مفعّل بعد. يرجى مراجعة صندوق الوارد والضغط على رابط تأكيد البريد الإلكتروني لتفعيل الحساب.' };
+        }
+        if (authError?.message?.includes('Invalid login credentials')) {
+          return { success: false, error: 'البريد الإلكتروني أو كلمة المرور غير صحيحة' };
+        }
         return { success: false, error: authError?.message || 'بيانات الدخول غير صحيحة' };
       }
 
@@ -203,7 +245,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Fetch Profile
       let profile = await db.getProfileByAuthUserId(authUser.id);
       
-      // Fallback: If profile by auth_user_id was not linked yet, search by company email
+      // Fallback 1: If profile was created before linking auth_user_id, search by company email
       if (!profile) {
         const companies = await db.getCompanies();
         const comp = companies.find(c => c.email.toLowerCase() === normalizedEmail);
@@ -215,6 +257,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             profile = { ...adminProf, auth_user_id: authUser.id };
           }
         }
+      }
+
+      // Fallback 2: If profile does not exist yet (e.g. initial registration with pending email verification), auto-provision now
+      if (!profile) {
+        const meta = authUser.user_metadata || {};
+        const comp = await db.createCompany({
+          name: meta.company_name || 'شركة الشحن',
+          phone: meta.phone || '',
+          email: normalizedEmail,
+          address: meta.address || 'جمهورية مصر العربية',
+        });
+        profile = await db.createProfile({
+          auth_user_id: authUser.id,
+          company_id: comp.id,
+          full_name: meta.full_name || 'المدير العام',
+          phone: meta.phone || '',
+          role: 'admin',
+        });
       }
 
       if (!profile) {

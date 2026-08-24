@@ -107,8 +107,13 @@ export const RegisterCompanyPage: React.FC<RegisterCompanyPageProps> = ({ naviga
     setLoading(false);
 
     if (result.success) {
-      showToast('success', isRTL ? 'تم إنشاء حساب الشركة بنجاح!' : 'Company registered successfully!', isRTL ? `مرحباً بك في لوحة تحكم ${companyName}` : 'Welcome to your new workspace');
-      navigate('/dashboard');
+      if (result.requiresEmailConfirmation) {
+        showToast('success', isRTL ? 'تم إنشاء الحساب بنجاح!' : 'Account registered!', result.message);
+        navigate('/login?registered=true');
+      } else {
+        showToast('success', isRTL ? 'تم إنشاء حساب الشركة بنجاح!' : 'Company registered successfully!', isRTL ? `مرحباً بك في لوحة تحكم ${companyName}` : 'Welcome to your new workspace');
+        navigate('/dashboard');
+      }
     } else {
       setError(result.error || (isRTL ? 'حدث خطأ أثناء إنشاء الحساب' : 'Failed to register company'));
       showToast('error', isRTL ? 'تعذر إنشاء الحساب' : 'Registration Error', result.error);

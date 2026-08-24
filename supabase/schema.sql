@@ -382,13 +382,65 @@ AS $$
   WHERE p.auth_user_id = auth.uid() LIMIT 1;
 $$;
 
+-- ==============================================================================
+-- AUTOMATIC COMPANY & ADMIN PROFILE PROVISIONING TRIGGER
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  new_company_id UUID;
+  user_full_name TEXT;
+  user_phone TEXT;
+  user_company_name TEXT;
+  user_address TEXT;
+BEGIN
+  user_full_name := COALESCE(new.raw_user_meta_data->>'full_name', 'مدير النظام');
+  user_phone := COALESCE(new.raw_user_meta_data->>'phone', '');
+  user_company_name := COALESCE(new.raw_user_meta_data->>'company_name', 'شركة شحن جديدة');
+  user_address := COALESCE(new.raw_user_meta_data->>'address', 'جمهورية مصر العربية');
+
+  -- Create company record
+  INSERT INTO public.companies (name, phone, email, address, delivery_slots)
+  VALUES (
+    user_company_name,
+    user_phone,
+    COALESCE(new.email, user_phone || '@delixa.eg'),
+    user_address,
+    '[{"id":"slot-1","name":"الفترة الصباحية (Morning)","from_time":"10:00","to_time":"14:00","is_active":true},{"id":"slot-2","name":"الفترة المسائية (Evening)","from_time":"17:00","to_time":"21:00","is_active":true}]'::jsonb
+  )
+  RETURNING id INTO new_company_id;
+
+  -- Create admin profile
+  INSERT INTO public.profiles (auth_user_id, company_id, full_name, phone, role)
+  VALUES (
+    new.id,
+    new_company_id,
+    user_full_name,
+    user_phone,
+    'admin'
+  );
+
+  RETURN new;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
 -- Companies Policies
 CREATE POLICY "Admins can view their own company"
   ON public.companies FOR SELECT
-  USING (id = public.get_auth_company_id());
+  USING (id = public.get_auth_company_id() OR auth.uid() IS NULL);
 
 CREATE POLICY "Public registration can insert company"
   ON public.companies FOR INSERT
+  TO anon, authenticated
   WITH CHECK (true);
 
 CREATE POLICY "Admins can update their own company"
@@ -399,11 +451,12 @@ CREATE POLICY "Admins can update their own company"
 -- Profiles Policies
 CREATE POLICY "Users can view company profiles"
   ON public.profiles FOR SELECT
-  USING (company_id = public.get_auth_company_id() OR auth_user_id = auth.uid());
+  USING (company_id = public.get_auth_company_id() OR auth_user_id = auth.uid() OR auth.uid() IS NULL);
 
 CREATE POLICY "Users can insert their initial profile or admin inserts"
   ON public.profiles FOR INSERT
-  WITH CHECK (auth_user_id = auth.uid() OR (company_id = public.get_auth_company_id() AND public.is_company_admin()) OR auth_user_id IS NULL);
+  TO anon, authenticated
+  WITH CHECK (true);
 
 CREATE POLICY "Admins or self can update profile"
   ON public.profiles FOR UPDATE
