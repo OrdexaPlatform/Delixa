@@ -20,6 +20,7 @@ interface AuthContextType {
   loginAdmin: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
   loginCourier: (employeeId: string, password?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
+  resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   updateCompanyProfile: (updates: Partial<Company>) => Promise<{ success: boolean; error?: string }>;
   switchDemoUser?: (type: 'adminCompanyA' | 'adminCompanyB' | 'courierA') => void;
 }
@@ -135,6 +136,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (authError) {
         if (authError.message?.includes('already registered') || (authError as any).status === 422) {
           return { success: false, error: 'هذا البريد الإلكتروني مسجل بالفعل. يرجى تسجيل الدخول أو استخدام بريد إلكتروني آخر.' };
+        }
+        if (authError.message?.toLowerCase().includes('rate limit') || (authError as any).status === 429) {
+          return { 
+            success: false, 
+            error: 'تم تجاوز الحد الأقصى لإرسال رسائل البريد الإلكتروني من مزود Supabase المجاني (Email rate limit exceeded). يرجى تفعيل Custom SMTP في Supabase أو الانتظار لفترة وجيزة.' 
+          };
         }
         return { success: false, error: authError.message || 'فشل إنشاء المستخدم في Supabase Auth' };
       }
@@ -377,6 +384,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
+  // 5. Password Reset Request via Supabase Auth
+  const resetPassword = async (email: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      if (!isSupabaseConfigured) {
+        return { success: false, error: 'يرجى ضبط مفاتيح Supabase أولاً' };
+      }
+      const normalizedEmail = email.trim().toLowerCase();
+      const redirectUrl = typeof window !== 'undefined' ? `${window.location.origin}/login` : undefined;
+      const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+        redirectTo: redirectUrl,
+      });
+
+      if (error) {
+        if (error.message?.includes('rate limit')) {
+          return { success: false, error: 'تم تجاوز الحد الأقصى لإرسال رسائل البريد الإلكتروني. يرجى الانتظار بضع دقائق ثم المحاولة مجدداً.' };
+        }
+        return { success: false, error: error.message || 'فشل إرسال رابط استعادة كلمة المرور' };
+      }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'حدث خطأ أثناء طلب استعادة كلمة المرور' };
+    }
+  };
+
   const logout = async () => {
     try {
       if (isSupabaseConfigured) {
@@ -396,6 +427,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loginAdmin,
     loginCourier,
     logout,
+    resetPassword,
     updateCompanyProfile,
   };
 

@@ -1,31 +1,43 @@
 import React, { useState } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
-import { Mail, ArrowLeft, ArrowRight, KeyRound, CheckCircle2 } from 'lucide-react';
+import { Mail, ArrowLeft, ArrowRight, KeyRound, CheckCircle2, AlertCircle } from 'lucide-react';
 
 interface ForgotPasswordPageProps {
   navigate: (path: string) => void;
 }
 
 export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ navigate }) => {
+  const { resetPassword } = useAuth();
   const { t, isRTL } = useLanguage();
   const { showToast } = useToast();
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const ArrowIcon = isRTL ? ArrowLeft : ArrowRight;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email) return;
+    setError(null);
+    if (!email || !email.trim()) {
+      setError('يرجى إدخال البريد الإلكتروني');
+      return;
+    }
 
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    const res = await resetPassword(email);
+    setLoading(false);
+
+    if (res.success) {
       setSent(true);
       showToast('success', 'تم إرسال رابط الاستعادة', 'تفقد بريدك الإلكتروني لتعيين كلمة مرور جديدة');
-    }, 600);
+    } else {
+      setError(res.error || 'فشل إرسال رابط استعادة كلمة المرور');
+      showToast('error', 'تعذر الإرسال', res.error);
+    }
   };
 
   return (
@@ -62,6 +74,13 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ navigate
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
+              {error && (
+                <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                  <span>{error}</span>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   {t.emailLabel}
