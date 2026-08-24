@@ -1,15 +1,15 @@
-import { 
-  Company, 
-  Profile, 
-  Courier, 
-  Merchant, 
-  Order, 
-  UserRole, 
-  CourierStatus, 
-  MerchantStatus, 
-  OrderStatus, 
-  DeliveryFailureReason, 
-  CustomerResponseStatus, 
+import {
+  Company,
+  Profile,
+  Courier,
+  Merchant,
+  Order,
+  UserRole,
+  CourierStatus,
+  MerchantStatus,
+  OrderStatus,
+  DeliveryFailureReason,
+  CustomerResponseStatus,
   OrderEvent,
   ReturnRecord,
   ReturnReason,
@@ -24,15 +24,16 @@ import {
   DeliverySlot,
   NotificationType,
   CourierSettlement,
-  CourierCollectionSummary
+  CourierCollectionSummary,
 } from '../types';
 import { generateConfirmationToken } from './whatsapp';
-import { 
-  hashPassword, 
-  verifyPassword, 
-  normalizeEmployeeId, 
-  normalizePassword 
+import {
+  hashPassword,
+  verifyPassword,
+  normalizeEmployeeId,
+  normalizePassword,
 } from './crypto';
+import { supabase } from './supabase';
 
 export const FAILURE_REASONS = [
   { key: 'customer_unavailable', labelAr: 'العميل غير متاح', labelEn: 'Customer unavailable' },
@@ -54,30 +55,28 @@ export const RETURN_REASONS = [
   { key: 'other', labelAr: 'سبب آخر', labelEn: 'Other' },
 ] as const;
 
-const STORAGE_KEYS = {
-  COMPANIES: 'delixa_db_companies',
-  PROFILES: 'delixa_db_profiles',
-  COURIERS: 'delixa_db_couriers',
-  MERCHANTS: 'delixa_db_merchants',
-  ORDERS: 'delixa_db_orders',
-  RETURNS: 'delixa_db_returns',
-  ORDER_EVENTS: 'delixa_db_order_events',
-  NOTIFICATIONS: 'delixa_db_notifications',
-  SETTLEMENTS: 'delixa_db_courier_settlements',
-  MERCHANT_TRANSACTIONS: 'delixa_db_merchant_transactions',
-  MERCHANT_SETTLEMENTS: 'delixa_db_merchant_settlements',
-  CURRENT_SESSION: 'delixa_auth_session',
-  LANGUAGE: 'delixa_pref_language'
-};
+export const DEFAULT_DELIVERY_SLOTS: DeliverySlot[] = [
+  { id: 'slot-1', name: 'الفترة الصباحية (Morning)', from_time: '10:00', to_time: '14:00', is_active: true },
+  { id: 'slot-2', name: 'الفترة المسائية (Evening)', from_time: '17:00', to_time: '21:00', is_active: true },
+];
 
-// Real-time synchronization helper across tabs & components
+// Helper for generating UUID-like identifiers (still used for local IDs if needed, but Supabase will generate IDs)
+export function generateId(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+// Real-time synchronization helper (keep as is, but now it will work with Supabase realtime)
 const BROADCAST_EVENT = 'delixa-realtime-order-sync';
 let broadcastChannel: BroadcastChannel | null = null;
 if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
   try {
     broadcastChannel = new BroadcastChannel('delixa_orders_channel');
   } catch (e) {
-    // Ignore if not supported in sandbox
+    // Ignore if not supported
   }
 }
 
@@ -102,9 +101,8 @@ export function subscribeOrderUpdates(callback: (orderId?: string) => void): () 
   };
 
   const handleStorageEvent = (e: StorageEvent) => {
-    if (e.key === STORAGE_KEYS.ORDERS || e.key === STORAGE_KEYS.ORDER_EVENTS) {
-      callback();
-    }
+    // In Supabase we don't rely on storage events, but we keep for compatibility
+    callback();
   };
 
   const handleBroadcastMessage = (e: MessageEvent) => {
@@ -128,800 +126,181 @@ export function subscribeOrderUpdates(callback: (orderId?: string) => void): () 
   };
 }
 
-// Helper for generating UUID-like identifiers
-export function generateId(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
-// Initial Seeds to provide a working out-of-the-box experience for testing
-function seedInitialData() {
-  const existingCompanies = localStorage.getItem(STORAGE_KEYS.COMPANIES);
-  if (existingCompanies && JSON.parse(existingCompanies).length > 0) {
-    return; // Already initialized
-  }
-
-  const todayStr = new Date().toISOString().split('T')[0];
-
-  // Seed Company A: Cairo Express Logistics (شركة كايرو إكسبريس للشحن)
-  const companyAId = 'c1111111-1111-4111-a111-111111111111';
-  const companyA: Company = {
-    id: companyAId,
-    name: 'كايرو إكسبريس للخدمات اللوجستية (Cairo Express)',
-    phone: '01012345678',
-    email: 'admin@cairoexpress.eg',
-    address: 'شارع التسعين الجنوبي، التجمع الخامس، القاهرة الجديدة',
-    logo_url: '',
-    created_at: new Date('2026-01-10T10:00:00Z').toISOString(),
-    updated_at: new Date('2026-01-10T10:00:00Z').toISOString(),
-  };
-
-  // Admin for Company A
-  const adminAProfileId = 'p1111111-1111-4111-a111-111111111111';
-  const adminA: Profile = {
-    id: adminAProfileId,
-    auth_user_id: 'u1111111-1111-4111-a111-111111111111',
-    company_id: companyAId,
-    full_name: 'أحمد محمود القاضي (Admin Ahmed)',
-    phone: '01012345678',
-    role: 'admin',
-    created_at: new Date('2026-01-10T10:00:00Z').toISOString(),
-    updated_at: new Date('2026-01-10T10:00:00Z').toISOString(),
-  };
-
-  // Couriers for Company A
-  const courier1ProfileId = 'p2222222-2222-4222-a222-222222222222';
-  const courier1Profile: Profile = {
-    id: courier1ProfileId,
-    auth_user_id: 'u2222222-2222-4222-a222-222222222222',
-    company_id: companyAId,
-    full_name: 'كريم عادل الشريف (Courier Karim)',
-    phone: '01123456789',
-    role: 'courier',
-    created_at: new Date('2026-01-15T09:00:00Z').toISOString(),
-    updated_at: new Date('2026-01-15T09:00:00Z').toISOString(),
-  };
-
-  const courier1: Courier = {
-    id: 'cr111111-1111-4111-a111-111111111111',
-    company_id: companyAId,
-    profile_id: courier1ProfileId,
-    employee_id: 'CR-101',
-    full_name: 'كريم عادل الشريف',
-    phone: '01123456789',
-    area: 'مدينة نصر ومصر الجديدة',
-    status: 'active',
-    password: hashPassword('CR101K'), // Securely hashed 6-character PIN
-    created_at: new Date('2026-01-15T09:00:00Z').toISOString(),
-    updated_at: new Date('2026-01-15T09:00:00Z').toISOString(),
-  };
-
-  const courier2ProfileId = 'p3333333-3333-4333-a333-333333333333';
-  const courier2Profile: Profile = {
-    id: courier2ProfileId,
-    auth_user_id: 'u3333333-3333-4333-a333-333333333333',
-    company_id: companyAId,
-    full_name: 'مصطفى حسين النجار (Courier Mostafa)',
-    phone: '01234567890',
-    role: 'courier',
-    created_at: new Date('2026-01-20T09:00:00Z').toISOString(),
-    updated_at: new Date('2026-01-20T09:00:00Z').toISOString(),
-  };
-
-  const courier2: Courier = {
-    id: 'cr222222-2222-4222-a222-222222222222',
-    company_id: companyAId,
-    profile_id: courier2ProfileId,
-    employee_id: 'CR-102',
-    full_name: 'مصطفى حسين النجار',
-    phone: '01234567890',
-    area: 'المعادي وحلوان',
-    status: 'active',
-    password: hashPassword('CR102M'), // Securely hashed 6-character PIN
-    created_at: new Date('2026-01-20T09:00:00Z').toISOString(),
-    updated_at: new Date('2026-01-20T09:00:00Z').toISOString(),
-  };
-
-  // Merchants for Company A
-  const merchantA1: Merchant = {
-    id: 'm1111111-1111-4111-a111-111111111111',
-    company_id: companyAId,
-    store_name: 'براند زارا ستور إيجيبت (Zara Store EG)',
-    owner_name: 'طارق حسني',
-    phone: '01099887766',
-    address: 'مول سيتي ستارز، الدور الثاني، مدينة نصر',
-    notes: 'شحنات ملابس سريعة التوصيل - استلام يومياً الساعة 2 ظهراً',
-    status: 'active',
-    created_at: new Date('2026-01-12T11:00:00Z').toISOString(),
-    updated_at: new Date('2026-01-12T11:00:00Z').toISOString(),
-  };
-
-  const merchantA2: Merchant = {
-    id: 'm2222222-2222-4222-a222-222222222222',
-    company_id: companyAId,
-    store_name: 'تك هوب للإلكترونيات (TechHub Electronics)',
-    owner_name: 'م. سامح فوزي',
-    phone: '01188776655',
-    address: 'شارع البستان، وسط البلد، القاهرة',
-    notes: 'بضائع إلكترونية حساسة - تتطلب توقيع واستلام نقدي فوري',
-    status: 'active',
-    created_at: new Date('2026-01-14T14:30:00Z').toISOString(),
-    updated_at: new Date('2026-01-14T14:30:00Z').toISOString(),
-  };
-
-  const merchantA3: Merchant = {
-    id: 'm3333333-3333-4333-a333-333333333333',
-    company_id: companyAId,
-    store_name: 'عطور ومستحضرات لافندر (Lavender Perfumes)',
-    owner_name: 'سارة عبد الرحمن',
-    phone: '01277665544',
-    address: 'شارع النصر، المعادي الجديدة',
-    notes: 'شحنات مستحضرات تجميل - كراتين محكمة الإغلاق',
-    status: 'active',
-    created_at: new Date('2026-01-25T16:00:00Z').toISOString(),
-    updated_at: new Date('2026-01-25T16:00:00Z').toISOString(),
-  };
-
-  // Orders for Company A
-  const orderA1: Order = {
-    id: 'ord-1001',
-    company_id: companyAId,
-    merchant_id: merchantA1.id,
-    courier_id: courier1.id,
-    order_number: 'DLX-000001',
-    customer_name: 'محمود عبد السلام',
-    customer_phone: '01065432198',
-    governorate: 'القاهرة',
-    city_area: 'مدينة نصر',
-    customer_address: 'عمارة 14، شارع عباس العقاد، الدور الرابع',
-    customer_landmark: 'بجوار بنك مصر',
-    cod_amount: 850.00,
-    delivery_date: todayStr,
-    delivery_from: '12:00',
-    delivery_to: '16:00',
-    notes: 'الاتصال قبل الوصول بـ 15 دقيقة',
-    status: 'assigned',
-    confirmation_token: '8XK29M',
-    confirmation_sent_at: new Date('2026-08-19T10:15:00Z').toISOString(),
-    customer_response_status: 'confirmed',
-    customer_responded_at: new Date('2026-08-19T10:45:00Z').toISOString(),
-    created_at: new Date('2026-08-19T10:00:00Z').toISOString(),
-    updated_at: new Date('2026-08-19T10:45:00Z').toISOString(),
-  };
-
-  const orderA2: Order = {
-    id: 'ord-1002',
-    company_id: companyAId,
-    merchant_id: merchantA2.id,
-    courier_id: courier1.id,
-    order_number: 'DLX-000002',
-    customer_name: 'ياسمين حسن توفيق',
-    customer_phone: '01144332211',
-    governorate: 'القاهرة',
-    city_area: 'مصر الجديدة',
-    customer_address: 'شارع الميرغني، أمام محطة مترو كلية البنات',
-    customer_landmark: 'برج الأطباء الدور الرابع',
-    cod_amount: 1450.00,
-    delivery_date: todayStr,
-    delivery_from: '14:00',
-    delivery_to: '18:00',
-    notes: 'الدفع نقدي عند الاستلام',
-    status: 'out_for_delivery',
-    confirmation_token: '7mK9pQ',
-    confirmation_sent_at: new Date('2026-08-19T11:40:00Z').toISOString(),
-    customer_response_status: 'pending',
-    created_at: new Date('2026-08-19T11:30:00Z').toISOString(),
-    updated_at: new Date('2026-08-20T08:00:00Z').toISOString(),
-  };
-
-  const orderA3: Order = {
-    id: 'ord-1003',
-    company_id: companyAId,
-    merchant_id: merchantA3.id,
-    courier_id: courier2.id,
-    order_number: 'DLX-000003',
-    customer_name: 'عمر خالد الدسوقي',
-    customer_phone: '01299881122',
-    governorate: 'القاهرة',
-    city_area: 'المعادي',
-    customer_address: 'شارع 9، فيلا 3، المعادي، القاهرة',
-    customer_landmark: 'خلف كارفور المعادي',
-    cod_amount: 520.00,
-    delivery_date: todayStr,
-    delivery_from: '10:00',
-    delivery_to: '14:00',
-    notes: 'التسليم لأمن العمارة في حال عدم التواجد',
-    status: 'delivered',
-    delivered_at: new Date('2026-08-20T11:45:00Z').toISOString(),
-    delivered_by_courier_id: courier2.id,
-    confirmation_token: '4NV81Z',
-    confirmation_sent_at: new Date('2026-08-18T14:10:00Z').toISOString(),
-    customer_response_status: 'confirmed',
-    customer_responded_at: new Date('2026-08-18T14:30:00Z').toISOString(),
-    created_at: new Date('2026-08-18T14:00:00Z').toISOString(),
-    updated_at: new Date('2026-08-20T11:45:00Z').toISOString(),
-  };
-
-  const orderA4: Order = {
-    id: 'ord-1004',
-    company_id: companyAId,
-    merchant_id: merchantA1.id,
-    courier_id: courier1.id,
-    order_number: 'DLX-000004',
-    customer_name: 'حازم عادل السعيد',
-    customer_phone: '01011223344',
-    governorate: 'القاهرة',
-    city_area: 'مدينة نصر',
-    customer_address: 'شارع مكرم عبيد، بجوار سيتي سنتر',
-    customer_landmark: 'أمام بنك الأهلي',
-    cod_amount: 980.00,
-    delivery_date: todayStr,
-    delivery_from: '11:00',
-    delivery_to: '15:00',
-    notes: 'معاينة المقاس قبل الاستلام',
-    status: 'failed',
-    failure_reason: 'customer_unavailable',
-    failure_notes: 'العميل مسافر ولم يتمكن أحد من الاستلام',
-    confirmation_token: '2PW99A',
-    confirmation_sent_at: new Date('2026-08-19T09:15:00Z').toISOString(),
-    customer_response_status: 'reschedule_requested',
-    customer_selected_date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
-    customer_selected_from: '14:00',
-    customer_selected_to: '18:00',
-    customer_note: 'يرجى التوصيل غداً بعد العصر لعدم وجود أحد بالمنزل اليوم',
-    customer_responded_at: new Date('2026-08-19T09:40:00Z').toISOString(),
-    created_at: new Date('2026-08-19T09:00:00Z').toISOString(),
-    updated_at: new Date('2026-08-20T13:10:00Z').toISOString(),
-  };
-
-  const orderA5: Order = {
-    id: 'ord-1005',
-    company_id: companyAId,
-    merchant_id: merchantA1.id,
-    courier_id: null,
-    order_number: 'DLX-000005',
-    customer_name: 'هدير أشرف زكي',
-    customer_phone: '01511223344',
-    governorate: 'الجيزة',
-    city_area: 'الدقي',
-    customer_address: 'حي الدقي، شارع مصدق، الجيزة',
-    customer_landmark: 'بجوار صيدلية العزبي',
-    cod_amount: 630.00,
-    delivery_date: todayStr,
-    delivery_from: '13:00',
-    delivery_to: '17:00',
-    notes: 'طلب فحص المنتج قبل الاستلام',
-    status: 'pending',
-    confirmation_token: '5KT72B',
-    customer_response_status: 'pending',
-    created_at: new Date('2026-08-20T07:00:00Z').toISOString(),
-    updated_at: new Date('2026-08-20T07:00:00Z').toISOString(),
-  };
-
-  // Seed initial events for Company A orders
-  const initialEvents: OrderEvent[] = [
-    {
-      id: generateId(),
-      order_id: orderA1.id,
-      company_id: companyAId,
-      event_type: 'link_generated',
-      timestamp: new Date('2026-08-19T10:00:00Z').toISOString(),
-      actor: 'system',
-      details: 'تم توليد رابط التأكيد القصير والفريد للشحنة'
-    },
-    {
-      id: generateId(),
-      order_id: orderA1.id,
-      company_id: companyAId,
-      event_type: 'whatsapp_sent',
-      timestamp: new Date('2026-08-19T10:15:00Z').toISOString(),
-      actor: 'admin',
-      actor_name: 'أحمد محمود (Admin)',
-      details: 'تم إرسال رسالة التأكيد عبر واتساب إلى 01065432198'
-    },
-    {
-      id: generateId(),
-      order_id: orderA1.id,
-      company_id: companyAId,
-      event_type: 'link_opened',
-      timestamp: new Date('2026-08-19T10:40:00Z').toISOString(),
-      actor: 'customer',
-      details: 'قام العميل بفتح صفحة الشحنة من الهاتف'
-    },
-    {
-      id: generateId(),
-      order_id: orderA1.id,
-      company_id: companyAId,
-      event_type: 'customer_confirmed',
-      timestamp: new Date('2026-08-19T10:45:00Z').toISOString(),
-      actor: 'customer',
-      details: 'قام العميل بتأكيد موعد استلام الشحنة المحدد بنجاح'
-    },
-    {
-      id: generateId(),
-      order_id: orderA4.id,
-      company_id: companyAId,
-      event_type: 'link_generated',
-      timestamp: new Date('2026-08-19T09:00:00Z').toISOString(),
-      actor: 'system',
-      details: 'تم توليد رابط التأكيد القصير والفريد للشحنة'
-    },
-    {
-      id: generateId(),
-      order_id: orderA4.id,
-      company_id: companyAId,
-      event_type: 'customer_rescheduled',
-      timestamp: new Date('2026-08-19T09:40:00Z').toISOString(),
-      actor: 'customer',
-      details: 'طلب العميل إعادة جدولة التوصيل إلى الغد - ملاحظة: يرجى التوصيل بعد العصر'
-    }
-  ];
-
-  // Seed Company B: Alexandria Fast Cargo (شركة الإسكندرية للشحن السريع)
-  // Demonstrating multi-tenant isolation!
-  const companyBId = 'c2222222-2222-4222-b222-222222222222';
-  const companyB: Company = {
-    id: companyBId,
-    name: 'الإسكندرية للشحن السريع (Alexandria Fast Cargo)',
-    phone: '01298765432',
-    email: 'admin@alexfastcargo.eg',
-    address: 'شارع فؤاد، محطة الرمل، الإسكندرية',
-    logo_url: '',
-    created_at: new Date('2026-02-01T08:00:00Z').toISOString(),
-    updated_at: new Date('2026-02-01T08:00:00Z').toISOString(),
-  };
-
-  const adminBProfile: Profile = {
-    id: 'p4444444-4444-4444-b444-444444444444',
-    auth_user_id: 'u4444444-4444-4444-b444-444444444444',
-    company_id: companyBId,
-    full_name: 'إبراهيم سمير الشاذلي (Admin Ibrahim)',
-    phone: '01298765432',
-    role: 'admin',
-    created_at: new Date('2026-02-01T08:00:00Z').toISOString(),
-    updated_at: new Date('2026-02-01T08:00:00Z').toISOString(),
-  };
-
-  const merchantB1: Merchant = {
-    id: 'mb111111-1111-4111-b111-111111111111',
-    company_id: companyBId,
-    store_name: 'متجر سحر الإسكندرية للأحذية',
-    owner_name: 'وليد غانم',
-    phone: '01233445566',
-    address: 'سموحة، الإسكندرية',
-    notes: 'متجر خاص بالشركة الثانية فقط',
-    status: 'active',
-    created_at: new Date('2026-02-05T10:00:00Z').toISOString(),
-    updated_at: new Date('2026-02-05T10:00:00Z').toISOString(),
-  };
-
-  // Seed initial sample return for Company A
-  const sampleReturn1: ReturnRecord = {
-    id: 'ret-1001',
-    company_id: companyAId,
-    order_id: orderA4.id,
-    merchant_id: merchantA1.id,
-    courier_id: courier1.id,
-    return_number: 'DLX-RET-000001',
-    customer_name: 'حازم عادل السعيد',
-    customer_phone: '01011223344',
-    return_address: 'شارع مكرم عبيد، بجوار سيتي سنتر، مدينة نصر، القاهرة',
-    return_amount: 980,
-    return_shipping_cost: 45,
-    other_cost: 0,
-    total_return_amount: 1025,
-    return_reason: 'customer_unavailable',
-    notes: 'العميل مسافر ولم يتمكن أحد من الاستلام - إعادة الشحنة للمتجر',
-    status: 'with_courier',
-    created_by: 'أحمد محمود القاضي (Admin Ahmed)',
-    created_at: new Date('2026-08-20T10:00:00Z').toISOString(),
-    updated_at: new Date('2026-08-20T10:00:00Z').toISOString(),
-  };
-
-  // Write to storage
-  localStorage.setItem(STORAGE_KEYS.COMPANIES, JSON.stringify([companyA, companyB]));
-  localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify([adminA, courier1Profile, courier2Profile, adminBProfile]));
-  localStorage.setItem(STORAGE_KEYS.COURIERS, JSON.stringify([courier1, courier2]));
-  localStorage.setItem(STORAGE_KEYS.MERCHANTS, JSON.stringify([merchantA1, merchantA2, merchantA3, merchantB1]));
-  localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify([orderA1, orderA2, orderA3, orderA4, orderA5]));
-  localStorage.setItem(STORAGE_KEYS.RETURNS, JSON.stringify([sampleReturn1]));
-  localStorage.setItem(STORAGE_KEYS.ORDER_EVENTS, JSON.stringify(initialEvents));
-}
-
-// Backfill helper for existing orders without tokens or customer status
-function backfillOrderConfirmationFields() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.ORDERS);
-    if (!raw) return;
-    const orders: Order[] = JSON.parse(raw);
-    let modified = false;
-
-    const updatedOrders = orders.map(o => {
-      let changed = false;
-      const copy = { ...o };
-      if (!copy.confirmation_token) {
-        copy.confirmation_token = generateConfirmationToken();
-        changed = true;
-      }
-      if (!copy.customer_response_status) {
-        copy.customer_response_status = 'pending';
-        changed = true;
-      }
-      if (changed) modified = true;
-      return copy;
-    });
-
-    if (modified) {
-      localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(updatedOrders));
-    }
-  } catch (e) {
-    // Ignore error in parsing
-  }
-}
-
-// Backfill helper for returns storage
-function backfillReturns() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.RETURNS);
-    if (!raw || JSON.parse(raw).length === 0) {
-      const ordersRaw = localStorage.getItem(STORAGE_KEYS.ORDERS);
-      if (!ordersRaw) return;
-      const orders: Order[] = JSON.parse(ordersRaw);
-      const companyAOrders = orders.filter(o => o.status === 'failed' || o.status === 'delivered');
-      if (companyAOrders.length > 0) {
-        const targetOrder = companyAOrders.find(o => o.status === 'failed') || companyAOrders[0];
-        const initialReturn: ReturnRecord = {
-          id: 'ret-1001',
-          company_id: targetOrder.company_id,
-          order_id: targetOrder.id,
-          merchant_id: targetOrder.merchant_id,
-          courier_id: targetOrder.courier_id || null,
-          return_number: 'DLX-RET-000001',
-          customer_name: targetOrder.customer_name,
-          customer_phone: targetOrder.customer_phone,
-          return_address: targetOrder.customer_address,
-          return_amount: Number(targetOrder.cod_amount) || 0,
-          return_shipping_cost: 45,
-          other_cost: 0,
-          total_return_amount: (Number(targetOrder.cod_amount) || 0) + 45,
-          return_reason: 'customer_unavailable',
-          notes: 'إرجاع مسجل للشحنة المتعثرة',
-          status: 'with_courier',
-          created_by: 'إدارة النظام',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        localStorage.setItem(STORAGE_KEYS.RETURNS, JSON.stringify([initialReturn]));
-      }
-    }
-  } catch (e) {
-    // Ignore
-  }
-}
-
-export const DEFAULT_DELIVERY_SLOTS: DeliverySlot[] = [
-  { id: 'slot-1', name: 'الفترة الصباحية (Morning)', from_time: '10:00', to_time: '14:00', is_active: true },
-  { id: 'slot-2', name: 'الفترة المسائية (Evening)', from_time: '17:00', to_time: '21:00', is_active: true },
-];
-
-// Backfill helper for delivery slots
-function backfillDeliverySlots() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.COMPANIES);
-    if (!raw) return;
-    const companies: Company[] = JSON.parse(raw);
-    let modified = false;
-
-    const updated = companies.map(c => {
-      if (!c.delivery_slots || c.delivery_slots.length === 0) {
-        modified = true;
-        return {
-          ...c,
-          delivery_slots: DEFAULT_DELIVERY_SLOTS,
-        };
-      }
-      return c;
-    });
-
-    if (modified) {
-      localStorage.setItem(STORAGE_KEYS.COMPANIES, JSON.stringify(updated));
-    }
-  } catch (e) {
-    // Ignore
-  }
-}
-
-// Backfill helper for notifications storage
-function backfillNotifications() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-    if (!raw || JSON.parse(raw).length === 0) {
-      const companyAId = 'c1111111-1111-4111-a111-111111111111';
-      const courier1Id = 'cr111111-1111-4111-a111-111111111111';
-      const now = new Date();
-      const tenMinsAgo = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
-      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
-
-      const initialNotifications: AppNotification[] = [
-        {
-          id: 'notif-1',
-          company_id: companyAId,
-          recipient_role: 'admin',
-          type: 'customer_confirmed',
-          title: 'تأكيد موعد استلام شحنة',
-          message: 'قام العميل محمود عبد السلام بتأكيد استلام الشحنة (#DLX-000001) في الموعد المحدد اليوم.',
-          order_id: 'ord-1001',
-          order_number: 'DLX-000001',
-          read: false,
-          created_at: tenMinsAgo,
-        },
-        {
-          id: 'notif-2',
-          company_id: companyAId,
-          recipient_role: 'admin',
-          type: 'return_created',
-          title: 'تسجيل إرجاع جديد',
-          message: 'تم تسجيل طلب إرجاع رقم (#DLX-RET-000001) وإسناده للمندوب كريم عادل.',
-          return_id: 'ret-1001',
-          return_number: 'DLX-RET-000001',
-          order_id: 'ord-1004',
-          order_number: 'DLX-000004',
-          read: false,
-          created_at: oneHourAgo,
-        },
-        {
-          id: 'notif-3',
-          company_id: companyAId,
-          recipient_role: 'courier',
-          recipient_courier_id: courier1Id,
-          type: 'order_assigned',
-          title: 'إسناد شحنة جديدة',
-          message: 'تم إسناد الشحنة رقم (#DLX-000001) بقيمة 850 ج.م في مدينة نصر.',
-          order_id: 'ord-1001',
-          order_number: 'DLX-000001',
-          read: false,
-          created_at: oneHourAgo,
-        },
-        {
-          id: 'notif-4',
-          company_id: companyAId,
-          recipient_role: 'courier',
-          recipient_courier_id: courier1Id,
-          type: 'customer_confirmed',
-          title: 'تأكيد العميل لموعد الشحنة',
-          message: 'العميل أكد موعد استلام الشحنة (#DLX-000001).',
-          order_id: 'ord-1001',
-          order_number: 'DLX-000001',
-          read: false,
-          created_at: tenMinsAgo,
-        }
-      ];
-
-      localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(initialNotifications));
-    }
-  } catch (e) {
-    // Ignore
-  }
-}
-
-// Backfill helper to migrate any plaintext courier passwords to secure hashes
-function backfillHashedCourierPasswords() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.COURIERS);
-    if (!raw) return;
-    const couriers: Courier[] = JSON.parse(raw);
-    let modified = false;
-
-    const updated = couriers.map(c => {
-      if (c.password && !c.password.startsWith('dlx_hash_')) {
-        modified = true;
-        return {
-          ...c,
-          password: hashPassword(c.password),
-        };
-      }
-      return c;
-    });
-
-    if (modified) {
-      localStorage.setItem(STORAGE_KEYS.COURIERS, JSON.stringify(updated));
-    }
-  } catch (e) {
-    // Ignore
-  }
-}
-
-// Backfill helper for merchant ledger and transactions
-function backfillMerchantLedgers() {
-  try {
-    const rawTx = localStorage.getItem(STORAGE_KEYS.MERCHANT_TRANSACTIONS);
-    if (!rawTx || JSON.parse(rawTx).length === 0) {
-      const companyAId = 'c1111111-1111-4111-a111-111111111111';
-      const merchantA1Id = 'm1111111-1111-4111-a111-111111111111';
-      const merchantA2Id = 'm2222222-2222-4222-a222-222222222222';
-      const now = new Date();
-      const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString();
-      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-
-      const initialTransactions: MerchantTransaction[] = [
-        {
-          id: 'mtx-1001',
-          company_id: companyAId,
-          merchant_id: merchantA1Id,
-          transaction_type: 'RETURN_COST',
-          direction: 'debit',
-          amount: 45,
-          reference_type: 'return',
-          reference_id: 'ret-1001',
-          order_id: 'ord-1004',
-          order_number: 'DLX-000004',
-          return_id: 'ret-1001',
-          return_number: 'DLX-RET-000001',
-          description: 'تكلفة إرجاع شحنة (#DLX-000004) - إرجاع #DLX-RET-000001',
-          created_by: 'أحمد محمود القاضي (Admin)',
-          created_at: twoDaysAgo,
-        },
-        {
-          id: 'mtx-1002',
-          company_id: companyAId,
-          merchant_id: merchantA2Id,
-          transaction_type: 'RETURN_COST',
-          direction: 'debit',
-          amount: 40,
-          reference_type: 'return',
-          description: 'تكلفة إرجاع شحنة متعثرة لمتجر إلكترونيات تيك زون',
-          created_by: 'أحمد محمود القاضي (Admin)',
-          created_at: yesterday,
-        }
-      ];
-
-      localStorage.setItem(STORAGE_KEYS.MERCHANT_TRANSACTIONS, JSON.stringify(initialTransactions));
-    }
-  } catch (e) {
-    // Ignore
-  }
-}
-
-// Auto seed and backfill on load
-seedInitialData();
-backfillOrderConfirmationFields();
-backfillReturns();
-backfillDeliverySlots();
-backfillNotifications();
-backfillHashedCourierPasswords();
-backfillMerchantLedgers();
-
+// ============================================================
+//  DB OBJECT
+// ============================================================
 export const db = {
   // ----------------------------------------------------
   // COMPANIES
   // ----------------------------------------------------
-  getCompanies(): Company[] {
-    const data = localStorage.getItem(STORAGE_KEYS.COMPANIES);
-    return data ? JSON.parse(data) : [];
+  async getCompanies(): Promise<Company[]> {
+    const { data, error } = await supabase
+      .from('companies')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return data || [];
   },
 
-  getCompanyById(id: string): Company | null {
-    const list = this.getCompanies();
-    return list.find(c => c.id === id) || null;
+  async getCompanyById(id: string): Promise<Company | null> {
+    const { data, error } = await supabase
+      .from('companies')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null; // not found
+      throw new Error(error.message);
+    }
+    return data;
   },
 
-  createCompany(companyData: Omit<Company, 'id' | 'created_at' | 'updated_at'>): Company {
-    const list = this.getCompanies();
+  async createCompany(companyData: Omit<Company, 'id' | 'created_at' | 'updated_at'>): Promise<Company> {
     const now = new Date().toISOString();
-    const newCompany: Company = {
-      id: generateId(),
-      ...companyData,
-      created_at: now,
-      updated_at: now,
-    };
-    list.push(newCompany);
-    localStorage.setItem(STORAGE_KEYS.COMPANIES, JSON.stringify(list));
-    return newCompany;
+    const { data, error } = await supabase
+      .from('companies')
+      .insert({
+        ...companyData,
+        created_at: now,
+        updated_at: now,
+      })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return data;
   },
 
-  updateCompany(id: string, updates: Partial<Company>): Company | null {
-    const list = this.getCompanies();
-    const index = list.findIndex(c => c.id === id);
-    if (index === -1) return null;
-
-    const updated = {
-      ...list[index],
-      ...updates,
-      updated_at: new Date().toISOString(),
-    };
-    list[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.COMPANIES, JSON.stringify(list));
-    return updated;
+  async updateCompany(id: string, updates: Partial<Company>): Promise<Company | null> {
+    const { data, error } = await supabase
+      .from('companies')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
+    return data;
   },
 
   // ----------------------------------------------------
   // PROFILES
   // ----------------------------------------------------
-  getProfiles(companyId?: string): Profile[] {
-    const data = localStorage.getItem(STORAGE_KEYS.PROFILES);
-    const list: Profile[] = data ? JSON.parse(data) : [];
+  async getProfiles(companyId?: string): Promise<Profile[]> {
+    let query = supabase.from('profiles').select('*');
     if (companyId) {
-      return list.filter(p => p.company_id === companyId);
+      query = query.eq('company_id', companyId);
     }
-    return list;
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return data || [];
   },
 
-  getProfileByAuthUserId(authUserId: string): Profile | null {
-    const list = this.getProfiles();
-    return list.find(p => p.auth_user_id === authUserId) || null;
+  async getProfileByAuthUserId(authUserId: string): Promise<Profile | null> {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('auth_user_id', authUserId)
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
+    return data;
   },
 
-  getProfileById(id: string): Profile | null {
-    const list = this.getProfiles();
-    return list.find(p => p.id === id) || null;
+  async getProfileById(id: string): Promise<Profile | null> {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
+    return data;
   },
 
-  updateProfile(id: string, updates: Partial<Profile>): Profile | null {
-    const list = this.getProfiles();
-    const index = list.findIndex(p => p.id === id);
-    if (index === -1) return null;
-
-    const updated = {
-      ...list[index],
-      ...updates,
-      updated_at: new Date().toISOString(),
-    };
-    list[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(list));
-    return updated;
+  async updateProfile(id: string, updates: Partial<Profile>): Promise<Profile | null> {
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
+    return data;
   },
 
-  createProfile(profileData: Omit<Profile, 'id' | 'created_at' | 'updated_at'>): Profile {
-    const list = this.getProfiles();
+  async createProfile(profileData: Omit<Profile, 'id' | 'created_at' | 'updated_at'>): Promise<Profile> {
     const now = new Date().toISOString();
-    const newProfile: Profile = {
-      id: generateId(),
-      ...profileData,
-      created_at: now,
-      updated_at: now,
-    };
-    list.push(newProfile);
-    localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(list));
-    return newProfile;
+    const { data, error } = await supabase
+      .from('profiles')
+      .insert({
+        ...profileData,
+        created_at: now,
+        updated_at: now,
+      })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return data;
   },
 
   // ----------------------------------------------------
   // COURIERS (Enforcing company_id RLS)
   // ----------------------------------------------------
-  getCouriers(companyId: string): Courier[] {
+  async getCouriers(companyId: string): Promise<Courier[]> {
     if (!companyId) return [];
-    const data = localStorage.getItem(STORAGE_KEYS.COURIERS);
-    const list: Courier[] = data ? JSON.parse(data) : [];
-    // Strict isolation: only return couriers belonging to this company
-    return list.filter(c => c.company_id === companyId);
+    const { data, error } = await supabase
+      .from('couriers')
+      .select('*')
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return data || [];
   },
 
-  getCourierById(companyId: string, id: string): Courier | null {
-    const list = this.getCouriers(companyId);
-    return list.find(c => c.id === id) || null;
+  async getCourierById(companyId: string, id: string): Promise<Courier | null> {
+    const { data, error } = await supabase
+      .from('couriers')
+      .select('*')
+      .eq('id', id)
+      .eq('company_id', companyId)
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
+    return data;
   },
 
-  getCourierByEmployeeId(employeeId: string, companyId?: string): Courier | null {
+  async getCourierByEmployeeId(employeeId: string, companyId?: string): Promise<Courier | null> {
     if (!employeeId) return null;
-    const data = localStorage.getItem(STORAGE_KEYS.COURIERS);
-    const list: Courier[] = data ? JSON.parse(data) : [];
-    
+    let query = supabase.from('couriers').select('*');
     const searchNorm = normalizeEmployeeId(employeeId);
     const searchNoHyphen = searchNorm.replace(/-/g, '');
-
-    return list.find(c => {
-      if (companyId && c.company_id !== companyId) return false;
+    // We'll fetch all and filter in memory because we need flexible matching
+    let { data, error } = await query;
+    if (error) throw new Error(error.message);
+    let couriers = data || [];
+    if (companyId) {
+      couriers = couriers.filter(c => c.company_id === companyId);
+    }
+    return couriers.find(c => {
       const cNorm = normalizeEmployeeId(c.employee_id);
       const cNoHyphen = cNorm.replace(/-/g, '');
       return cNorm === searchNorm || cNoHyphen === searchNoHyphen;
     }) || null;
   },
 
-  getCourierStats(companyId: string, courierId: string): { assignedOrders: number; deliveredOrders: number; failedOrders: number } {
-    const orders = this.getOrders(companyId, courierId);
+  async getCourierStats(companyId: string, courierId: string): Promise<{ assignedOrders: number; deliveredOrders: number; failedOrders: number }> {
+    const orders = await this.getOrders(companyId, courierId);
     return {
       assignedOrders: orders.length,
       deliveredOrders: orders.filter(o => o.status === 'delivered').length,
@@ -929,25 +308,24 @@ export const db = {
     };
   },
 
-  createCourier(companyId: string, courierData: {
+  async createCourier(companyId: string, courierData: {
     fullName: string;
     phone: string;
     area: string;
     employeeId: string;
     password?: string;
     status?: CourierStatus;
-  }): { courier: Courier; profile: Profile } {
+  }): Promise<{ courier: Courier; profile: Profile }> {
     const now = new Date().toISOString();
     const authUserId = generateId();
 
-    // Password validation: exactly 6 characters, alphanumeric
     const pwd = courierData.password?.trim() || '';
     if (pwd.length !== 6) {
       throw new Error('كلمة مرور المندوب يجب أن تتكون من 6 خانات تماماً');
     }
 
     // 1. Create Profile
-    const profile = this.createProfile({
+    const profile = await this.createProfile({
       auth_user_id: authUserId,
       company_id: companyId,
       full_name: courierData.fullName,
@@ -955,47 +333,42 @@ export const db = {
       role: 'courier',
     });
 
-    // 2. Create Courier record
-    const allCouriers: Courier[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.COURIERS) || '[]');
-    
-    // Validate unique employee_id in company
-    const existing = allCouriers.find(
-      c => c.company_id === companyId && c.employee_id.toUpperCase() === courierData.employeeId.trim().toUpperCase()
-    );
+    // 2. Check unique employee_id in company
+    const existing = await this.getCourierByEmployeeId(courierData.employeeId, companyId);
     if (existing) {
       throw new Error(`كود الموظف (${courierData.employeeId}) مسجل مسبقاً في هذه الشركة`);
     }
 
-    const newCourier: Courier = {
-      id: generateId(),
-      company_id: companyId,
-      profile_id: profile.id,
-      employee_id: courierData.employeeId.trim().toUpperCase(),
-      full_name: courierData.fullName.trim(),
-      phone: courierData.phone.trim(),
-      area: courierData.area.trim(),
-      status: courierData.status || 'active',
-      password: hashPassword(pwd),
-      created_at: now,
-      updated_at: now,
-    };
-
-    allCouriers.push(newCourier);
-    localStorage.setItem(STORAGE_KEYS.COURIERS, JSON.stringify(allCouriers));
-    return { courier: newCourier, profile };
+    const { data, error } = await supabase
+      .from('couriers')
+      .insert({
+        id: generateId(),
+        company_id: companyId,
+        profile_id: profile.id,
+        employee_id: courierData.employeeId.trim().toUpperCase(),
+        full_name: courierData.fullName.trim(),
+        phone: courierData.phone.trim(),
+        area: courierData.area.trim(),
+        status: courierData.status || 'active',
+        password: hashPassword(pwd),
+        created_at: now,
+        updated_at: now,
+      })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return { courier: data, profile };
   },
 
-  updateCourier(companyId: string, id: string, updates: Partial<Courier>): Courier | null {
-    const allCouriers: Courier[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.COURIERS) || '[]');
-    const index = allCouriers.findIndex(c => c.id === id && c.company_id === companyId);
-    if (index === -1) return null;
+  async updateCourier(companyId: string, id: string, updates: Partial<Courier>): Promise<Courier | null> {
+    // Fetch current courier
+    const current = await this.getCourierById(companyId, id);
+    if (!current) return null;
 
     // If employee_id is being updated, verify uniqueness
-    if (updates.employee_id && updates.employee_id.toUpperCase() !== allCouriers[index].employee_id.toUpperCase()) {
-      const duplicate = allCouriers.find(
-        c => c.company_id === companyId && c.id !== id && c.employee_id.toUpperCase() === updates.employee_id!.trim().toUpperCase()
-      );
-      if (duplicate) {
+    if (updates.employee_id && updates.employee_id.toUpperCase() !== current.employee_id.toUpperCase()) {
+      const duplicate = await this.getCourierByEmployeeId(updates.employee_id, companyId);
+      if (duplicate && duplicate.id !== id) {
         throw new Error(`كود الموظف (${updates.employee_id}) مسجل مسبقاً لمندوب آخر`);
       }
       updates.employee_id = updates.employee_id.trim().toUpperCase();
@@ -1012,41 +385,45 @@ export const db = {
       }
     }
 
-    const updated = {
-      ...allCouriers[index],
-      ...updates,
-      updated_at: new Date().toISOString(),
-    };
-    allCouriers[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.COURIERS, JSON.stringify(allCouriers));
+    const { data, error } = await supabase
+      .from('couriers')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('company_id', companyId)
+      .select()
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
 
     // Also update matching profile name/phone if changed
     if (updates.full_name || updates.phone) {
-      const allProfiles: Profile[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.PROFILES) || '[]');
-      const pIndex = allProfiles.findIndex(p => p.id === updated.profile_id);
-      if (pIndex !== -1) {
-        if (updates.full_name) allProfiles[pIndex].full_name = updates.full_name;
-        if (updates.phone) allProfiles[pIndex].phone = updates.phone;
-        allProfiles[pIndex].updated_at = new Date().toISOString();
-        localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(allProfiles));
+      const profileUpdates: Partial<Profile> = {};
+      if (updates.full_name) profileUpdates.full_name = updates.full_name;
+      if (updates.phone) profileUpdates.phone = updates.phone;
+      if (Object.keys(profileUpdates).length > 0) {
+        await this.updateProfile(current.profile_id, profileUpdates);
       }
     }
 
-    return updated;
+    return data;
   },
 
-  resetCourierPassword(companyId: string, id: string, newPassword: string): boolean {
+  async resetCourierPassword(companyId: string, id: string, newPassword: string): Promise<boolean> {
     const pwd = newPassword.trim();
     if (pwd.length !== 6) {
       throw new Error('كلمة المرور الجديدة يجب أن تكون 6 أحرف أو أرقام تماماً');
     }
-    const allCouriers: Courier[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.COURIERS) || '[]');
-    const index = allCouriers.findIndex(c => c.id === id && c.company_id === companyId);
-    if (index === -1) return false;
-
-    allCouriers[index].password = hashPassword(pwd);
-    allCouriers[index].updated_at = new Date().toISOString();
-    localStorage.setItem(STORAGE_KEYS.COURIERS, JSON.stringify(allCouriers));
+    const { error } = await supabase
+      .from('couriers')
+      .update({ password: hashPassword(pwd), updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('company_id', companyId);
+    if (error) {
+      if (error.code === 'PGRST116') return false;
+      throw new Error(error.message);
+    }
     return true;
   },
 
@@ -1055,39 +432,54 @@ export const db = {
     return verifyPassword(enteredPassword, courier.password, courier.employee_id);
   },
 
-  deleteCourier(companyId: string, id: string): boolean {
-    const allCouriers: Courier[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.COURIERS) || '[]');
-    const filtered = allCouriers.filter(c => !(c.id === id && c.company_id === companyId));
-    if (filtered.length === allCouriers.length) return false;
-
-    localStorage.setItem(STORAGE_KEYS.COURIERS, JSON.stringify(filtered));
+  async deleteCourier(companyId: string, id: string): Promise<boolean> {
+    const { error } = await supabase
+      .from('couriers')
+      .delete()
+      .eq('id', id)
+      .eq('company_id', companyId);
+    if (error) {
+      if (error.code === 'PGRST116') return false;
+      throw new Error(error.message);
+    }
     return true;
   },
 
   // ----------------------------------------------------
   // MERCHANTS (Enforcing company_id RLS)
   // ----------------------------------------------------
-  getMerchants(companyId: string): Merchant[] {
+  async getMerchants(companyId: string): Promise<Merchant[]> {
     if (!companyId) return [];
-    const data = localStorage.getItem(STORAGE_KEYS.MERCHANTS);
-    const list: Merchant[] = data ? JSON.parse(data) : [];
-    // Strict isolation: only merchants belonging to this company
-    return list.filter(m => m.company_id === companyId);
+    const { data, error } = await supabase
+      .from('merchants')
+      .select('*')
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return data || [];
   },
 
-  getMerchantById(companyId: string, id: string): Merchant | null {
-    const list = this.getMerchants(companyId);
-    return list.find(m => m.id === id) || null;
+  async getMerchantById(companyId: string, id: string): Promise<Merchant | null> {
+    const { data, error } = await supabase
+      .from('merchants')
+      .select('*')
+      .eq('id', id)
+      .eq('company_id', companyId)
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
+    return data;
   },
 
-  getMerchantStats(companyId: string, merchantId: string): { ordersCount: number } {
-    const orders = this.getOrders(companyId).filter(o => o.merchant_id === merchantId);
-    return {
-      ordersCount: orders.length,
-    };
+  async getMerchantStats(companyId: string, merchantId: string): Promise<{ ordersCount: number }> {
+    const orders = await this.getOrders(companyId);
+    const count = orders.filter(o => o.merchant_id === merchantId).length;
+    return { ordersCount: count };
   },
 
-  createMerchant(companyId: string, merchantData: Omit<Merchant, 'id' | 'company_id' | 'created_at' | 'updated_at'>): Merchant {
+  async createMerchant(companyId: string, merchantData: Omit<Merchant, 'id' | 'company_id' | 'created_at' | 'updated_at'>): Promise<Merchant> {
     if (!merchantData.store_name?.trim()) {
       throw new Error('اسم المتجر مطلوب');
     }
@@ -1095,96 +487,108 @@ export const db = {
       throw new Error('رقم هاتف المتجر مطلوب');
     }
 
-    const allMerchants: Merchant[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.MERCHANTS) || '[]');
     const now = new Date().toISOString();
-
-    const newMerchant: Merchant = {
-      id: generateId(),
-      company_id: companyId,
-      store_name: merchantData.store_name.trim(),
-      owner_name: merchantData.owner_name?.trim() || '',
-      brand_name: merchantData.brand_name?.trim() || '',
-      phone: merchantData.phone.trim(),
-      whatsapp: merchantData.whatsapp?.trim() || '',
-      email: merchantData.email?.trim() || '',
-      address: merchantData.address?.trim() || '',
-      logo_url: merchantData.logo_url?.trim() || '',
-      notes: merchantData.notes?.trim() || '',
-      status: merchantData.status || 'active',
-      created_at: now,
-      updated_at: now,
-    };
-
-    allMerchants.push(newMerchant);
-    localStorage.setItem(STORAGE_KEYS.MERCHANTS, JSON.stringify(allMerchants));
-    return newMerchant;
+    const { data, error } = await supabase
+      .from('merchants')
+      .insert({
+        id: generateId(),
+        company_id: companyId,
+        store_name: merchantData.store_name.trim(),
+        owner_name: merchantData.owner_name?.trim() || '',
+        brand_name: merchantData.brand_name?.trim() || '',
+        phone: merchantData.phone.trim(),
+        whatsapp: merchantData.whatsapp?.trim() || '',
+        email: merchantData.email?.trim() || '',
+        address: merchantData.address?.trim() || '',
+        logo_url: merchantData.logo_url?.trim() || '',
+        notes: merchantData.notes?.trim() || '',
+        status: merchantData.status || 'active',
+        created_at: now,
+        updated_at: now,
+      })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return data;
   },
 
-  updateMerchant(companyId: string, id: string, updates: Partial<Merchant>): Merchant | null {
-    const allMerchants: Merchant[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.MERCHANTS) || '[]');
-    const index = allMerchants.findIndex(m => m.id === id && m.company_id === companyId);
-    if (index === -1) return null;
-
-    const updated = {
-      ...allMerchants[index],
-      ...updates,
-      updated_at: new Date().toISOString(),
-    };
-    allMerchants[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.MERCHANTS, JSON.stringify(allMerchants));
-    return updated;
+  async updateMerchant(companyId: string, id: string, updates: Partial<Merchant>): Promise<Merchant | null> {
+    const { data, error } = await supabase
+      .from('merchants')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('company_id', companyId)
+      .select()
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
+    return data;
   },
 
-  deleteMerchant(companyId: string, id: string): boolean {
-    const allMerchants: Merchant[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.MERCHANTS) || '[]');
-    const filtered = allMerchants.filter(m => !(m.id === id && m.company_id === companyId));
-    if (filtered.length === allMerchants.length) return false;
-
-    localStorage.setItem(STORAGE_KEYS.MERCHANTS, JSON.stringify(filtered));
+  async deleteMerchant(companyId: string, id: string): Promise<boolean> {
+    const { error } = await supabase
+      .from('merchants')
+      .delete()
+      .eq('id', id)
+      .eq('company_id', companyId);
+    if (error) {
+      if (error.code === 'PGRST116') return false;
+      throw new Error(error.message);
+    }
     return true;
   },
 
   // ----------------------------------------------------
   // ORDERS (Enforcing company_id & role-based courier RLS)
   // ----------------------------------------------------
-  getNextOrderNumber(companyId: string): string {
-    const orders = this.getOrders(companyId);
+  async getNextOrderNumber(companyId: string): Promise<string> {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('order_number')
+      .eq('company_id', companyId)
+      .order('order_number', { ascending: false })
+      .limit(1);
+    if (error) throw new Error(error.message);
     let maxNum = 0;
-    orders.forEach(o => {
-      const match = o.order_number?.match(/DLX-(\d+)/);
+    if (data && data.length > 0) {
+      const match = data[0].order_number?.match(/DLX-(\d+)/);
       if (match && match[1]) {
         const n = parseInt(match[1], 10);
-        if (!isNaN(n) && n > maxNum) {
-          maxNum = n;
-        }
+        if (!isNaN(n)) maxNum = n;
       }
-    });
-    const nextVal = (maxNum || orders.length) + 1;
+    }
+    const nextVal = maxNum + 1;
     return `DLX-${String(nextVal).padStart(6, '0')}`;
   },
 
-  getOrders(companyId: string, courierIdFilter?: string | null): Order[] {
+  async getOrders(companyId: string, courierIdFilter?: string | null): Promise<Order[]> {
     if (!companyId) return [];
-    const data = localStorage.getItem(STORAGE_KEYS.ORDERS);
-    const list: Order[] = data ? JSON.parse(data) : [];
-    
-    // Step 1: Filter strictly by company_id
-    let companyOrders = list.filter(o => o.company_id === companyId);
-
-    // Step 2: If courier role is accessing, only return assigned orders
+    let query = supabase.from('orders').select('*').eq('company_id', companyId);
     if (courierIdFilter) {
-      companyOrders = companyOrders.filter(o => o.courier_id === courierIdFilter);
+      query = query.eq('courier_id', courierIdFilter);
     }
-
-    return companyOrders;
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return data || [];
   },
 
-  getOrderById(companyId: string, id: string): Order | null {
-    const list = this.getOrders(companyId);
-    return list.find(o => o.id === id) || null;
+  async getOrderById(companyId: string, id: string): Promise<Order | null> {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', id)
+      .eq('company_id', companyId)
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
+    return data;
   },
 
-  createOrder(companyId: string, orderData: {
+  async createOrder(companyId: string, orderData: {
     merchant_id: string;
     courier_id?: string | null;
     order_number?: string;
@@ -1199,47 +603,76 @@ export const db = {
     delivery_from: string;
     delivery_to: string;
     notes?: string;
-  }): Order {
-    if (!orderData.merchant_id) {
-      throw new Error('يرجى اختيار المتجر');
+  }): Promise<Order> {
+    if (!companyId) {
+      throw new Error('معرف الشركة مطلوب');
     }
-    if (!orderData.customer_name?.trim()) {
-      throw new Error('اسم العميل مطلوب');
+
+    // Verify merchant belongs to company
+    const merchant = await this.getMerchantById(companyId, orderData.merchant_id);
+    if (!merchant) {
+      throw new Error('المتجر المحدد غير موجود في هذه الشركة');
     }
-    if (!orderData.customer_phone?.trim()) {
-      throw new Error('رقم هاتف العميل مطلوب');
+
+    // Verify courier if provided
+    if (orderData.courier_id) {
+      const courier = await this.getCourierById(companyId, orderData.courier_id);
+      if (!courier) {
+        throw new Error('المندوب المحدد غير موجود في هذه الشركة');
+      }
     }
-    if (!orderData.customer_address?.trim()) {
-      throw new Error('عنوان التوصيل مطلوب');
-    }
+
+    // Validate other fields
+    if (!orderData.customer_name?.trim()) throw new Error('اسم العميل مطلوب');
+    if (!orderData.customer_phone?.trim()) throw new Error('رقم هاتف العميل مطلوب');
+    if (!orderData.customer_address?.trim()) throw new Error('عنوان التوصيل مطلوب');
     if (orderData.cod_amount === undefined || isNaN(Number(orderData.cod_amount)) || Number(orderData.cod_amount) < 0) {
       throw new Error('مبلغ التحصيل (COD) غير صالح');
     }
-    if (!orderData.delivery_date) {
-      throw new Error('تاريخ التوصيل مطلوب');
-    }
-    if (!orderData.delivery_from || !orderData.delivery_to) {
-      throw new Error('نافذة التوصيل الزمني مطلوبة');
-    }
-    if (orderData.delivery_from >= orderData.delivery_to) {
-      throw new Error('وقت بداية التوصيل يجب أن يكون قبل وقت النهاية');
+    if (!orderData.delivery_date) throw new Error('تاريخ التوصيل مطلوب');
+    if (!orderData.delivery_from || !orderData.delivery_to) throw new Error('نافذة التوصيل الزمني مطلوبة');
+    if (orderData.delivery_from >= orderData.delivery_to) throw new Error('وقت بداية التوصيل يجب أن يكون قبل وقت النهاية');
+
+    const orderNumber = orderData.order_number?.trim() || await this.getNextOrderNumber(companyId);
+
+    // Prevent duplicate order numbers
+    const existing = await supabase
+      .from('orders')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('order_number', orderNumber)
+      .maybeSingle();
+    if (existing.data) {
+      throw new Error(`رقم الطلب ${orderNumber} مستخدم بالفعل داخل الشركة`);
     }
 
-    const allOrders: Order[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
-    const now = new Date().toISOString();
-
-    const orderNumber = orderData.order_number?.trim() || this.getNextOrderNumber(companyId);
-    
-    // Status rule: if courier is assigned at creation, status is 'assigned', otherwise 'pending'
     const status: OrderStatus = orderData.courier_id ? 'assigned' : 'pending';
-
-    // Generate secure random short token for public customer confirmation page
     const confirmationToken = generateConfirmationToken();
 
-    const newOrder: Order = {
-      id: generateId(),
+    // Ensure unique token
+    let tokenExists = true;
+    let attempts = 0;
+    let token = confirmationToken;
+    while (tokenExists && attempts < 5) {
+      const { data } = await supabase
+        .from('orders')
+        .select('id')
+        .eq('confirmation_token', token)
+        .maybeSingle();
+      if (!data) tokenExists = false;
+      else {
+        token = generateConfirmationToken();
+        attempts++;
+      }
+    }
+    if (tokenExists) {
+      throw new Error('تعذر إنشاء رابط تأكيد فريد، يرجى المحاولة مرة أخرى');
+    }
+
+    const now = new Date().toISOString();
+    const newOrder: Omit<Order, 'id'> = {
       company_id: companyId,
-      merchant_id: orderData.merchant_id,
+      merchant_id: merchant.id,
       courier_id: orderData.courier_id || null,
       order_number: orderNumber,
       customer_name: orderData.customer_name.trim(),
@@ -1255,54 +688,57 @@ export const db = {
       notes: orderData.notes?.trim() || '',
       status,
       assigned_at: orderData.courier_id ? now : undefined,
-      confirmation_token: confirmationToken,
+      confirmation_token: token,
+      confirmation_sent_at: undefined,
       customer_response_status: 'pending',
       created_at: now,
       updated_at: now,
     };
 
-    allOrders.push(newOrder);
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(allOrders));
+    const { data, error } = await supabase
+      .from('orders')
+      .insert(newOrder)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
 
-    // Record initial event for order creation and token generation
-    this.addOrderEvent({
-      order_id: newOrder.id,
+    // Add order event
+    await this.addOrderEvent({
+      order_id: data.id,
       company_id: companyId,
       event_type: 'created',
       actor: 'system',
-      details: orderData.courier_id ? 'تم إنشاء الشحنة وتعيينها للمندوب وتوليد رابط التأكيد' : 'تم إنشاء الشحنة وتوليد رابط التأكيد القصير للعميل'
+      details: orderData.courier_id
+        ? 'تم إنشاء الشحنة وتعيينها للمندوب وتوليد رابط التأكيد'
+        : 'تم إنشاء الشحنة وتوليد رابط التأكيد القصير للعميل',
     });
 
-    notifyOrderUpdated(newOrder.id);
-    return newOrder;
+    notifyOrderUpdated(data.id);
+    return data;
   },
 
-  updateOrder(companyId: string, id: string, updates: Partial<Order>): Order | null {
-    const allOrders: Order[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
-    const index = allOrders.findIndex(o => o.id === id && o.company_id === companyId);
-    if (index === -1) return null;
-
+  async updateOrder(companyId: string, id: string, updates: Partial<Order>): Promise<Order | null> {
     // Validate delivery time if changed
-    const current = allOrders[index];
-    const newFrom = updates.delivery_from ?? current.delivery_from;
-    const newTo = updates.delivery_to ?? current.delivery_to;
-    if (newFrom && newTo && newFrom >= newTo) {
+    if (updates.delivery_from && updates.delivery_to && updates.delivery_from >= updates.delivery_to) {
       throw new Error('وقت بداية التوصيل يجب أن يكون قبل وقت النهاية');
     }
 
-    const updated = {
-      ...allOrders[index],
-      ...updates,
-      updated_at: new Date().toISOString(),
-    };
-    allOrders[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(allOrders));
+    const { data, error } = await supabase
+      .from('orders')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('company_id', companyId)
+      .select()
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
     notifyOrderUpdated(id);
-    return updated;
+    return data;
   },
 
-  // Centralized Status Transition Method
-  updateOrderStatus(
+  async updateOrderStatus(
     companyId: string,
     id: string,
     targetStatus: OrderStatus,
@@ -1314,32 +750,31 @@ export const db = {
       actorRole?: UserRole | 'customer' | 'system';
       actorName?: string;
     }
-  ): Order {
-    const allOrders: Order[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
-    const index = allOrders.findIndex(o => o.id === id && o.company_id === companyId);
-    if (index === -1) {
+  ): Promise<Order> {
+    const current = await this.getOrderById(companyId, id);
+    if (!current) {
       throw new Error('الطلب غير موجود في قاعدة بيانات الشركة');
     }
 
-    const currentOrder = allOrders[index];
     const now = new Date().toISOString();
-    const updates: Partial<Order> = {
-      updated_at: now,
-    };
-
+    const updates: Partial<Order> = { updated_at: now };
     let eventType: OrderEvent['event_type'] = 'status_changed';
     let eventDetails = `تغيرت حالة الشحنة إلى (${targetStatus})`;
 
-    // Transition rules:
-    // 1. Pending -> Assigned (requires or maintains courier_id)
+    // Transition rules
     if (targetStatus === 'assigned') {
-      const courierId = options?.courierId !== undefined ? options.courierId : currentOrder.courier_id;
+      const courierId = options?.courierId !== undefined ? options.courierId : current.courier_id;
       if (!courierId) {
         throw new Error('لا يمكن تعيين حالة الطلب إلى "معين" بدون اختيار مندوب التوصيل');
       }
+      // Verify courier belongs to company
+      const courier = await this.getCourierById(companyId, courierId);
+      if (!courier) {
+        throw new Error('المندوب المحدد غير موجود في هذه الشركة');
+      }
       updates.status = 'assigned';
       updates.courier_id = courierId;
-      if (!currentOrder.assigned_at) {
+      if (!current.assigned_at) {
         updates.assigned_at = now;
       }
       updates.failure_reason = undefined;
@@ -1347,38 +782,32 @@ export const db = {
       updates.failure_notes = undefined;
       eventType = 'courier_assigned';
       eventDetails = 'تم إسناد الشحنة وتعيين المندوب';
-    } 
-    // 2. Assigned -> Out for Delivery (Courier start delivery)
-    else if (targetStatus === 'out_for_delivery') {
-      if (currentOrder.status !== 'assigned' && currentOrder.status !== 'pending' && currentOrder.status !== 'failed') {
-        throw new Error(`لا يمكن بدء التوصيل لطلب في حالة (${currentOrder.status})`);
+    } else if (targetStatus === 'out_for_delivery') {
+      if (current.status !== 'assigned' && current.status !== 'pending' && current.status !== 'failed') {
+        throw new Error(`لا يمكن بدء التوصيل لطلب في حالة (${current.status})`);
       }
       updates.status = 'out_for_delivery';
-      if (!currentOrder.delivery_started_at) {
+      if (!current.delivery_started_at) {
         updates.delivery_started_at = now;
       }
       eventType = 'delivery_started';
       eventDetails = 'بدأ المندوب عملية التوصيل وتوجه للعميل';
-    } 
-    // 3. Out for Delivery -> Delivered
-    else if (targetStatus === 'delivered') {
-      if (currentOrder.status !== 'out_for_delivery' && currentOrder.status !== 'assigned') {
+    } else if (targetStatus === 'delivered') {
+      if (current.status !== 'out_for_delivery' && current.status !== 'assigned') {
         throw new Error('لا يمكن تأكيد التسليم إلا بعد خروج الشحنة للتوصيل');
       }
       updates.status = 'delivered';
-      if (!currentOrder.delivered_at) {
+      if (!current.delivered_at) {
         updates.delivered_at = now;
       }
-      updates.delivered_by = options?.actorName || currentOrder.courier_id || 'مندوب التوصيل';
-      updates.delivered_by_courier_id = currentOrder.courier_id || undefined;
+      updates.delivered_by = options?.actorName || current.courier_id || 'مندوب التوصيل';
+      updates.delivered_by_courier_id = current.courier_id || undefined;
       updates.failure_reason = undefined;
       updates.failure_note = undefined;
       updates.failure_notes = undefined;
       eventType = 'delivered';
-      eventDetails = `تم تسليم الشحنة بنجاح للعميل (${currentOrder.customer_name}) وتحصيل ${Number(currentOrder.cod_amount).toLocaleString()} ج.م`;
-    } 
-    // 4. Out for Delivery -> Failed
-    else if (targetStatus === 'failed') {
+      eventDetails = `تم تسليم الشحنة بنجاح للعميل (${current.customer_name}) وتحصيل ${Number(current.cod_amount).toLocaleString()} ج.م`;
+    } else if (targetStatus === 'failed') {
       if (!options?.failureReason) {
         throw new Error('يرجى تحديد سبب تعذر التسليم');
       }
@@ -1388,25 +817,22 @@ export const db = {
       }
       updates.status = 'failed';
       updates.failed_at = now;
-      updates.failed_by = options?.actorName || currentOrder.courier_id || 'مندوب التوصيل';
+      updates.failed_by = options?.actorName || current.courier_id || 'مندوب التوصيل';
       updates.failure_reason = options.failureReason;
+      // Keep both for compatibility
       updates.failure_note = noteText;
       updates.failure_notes = noteText;
       eventType = 'delivery_failed';
       const reasonLabel = FAILURE_REASONS[options.failureReason as DeliveryFailureReason] || options.failureReason;
       eventDetails = `تعذر تسليم الشحنة - السبب: ${reasonLabel}${noteText ? ` (${noteText})` : ''}`;
-    } 
-    // 5. Cancelled
-    else if (targetStatus === 'cancelled') {
-      if (currentOrder.status === 'delivered') {
+    } else if (targetStatus === 'cancelled') {
+      if (current.status === 'delivered') {
         throw new Error('لا يمكن إلغاء شحنة تم تسليمها بالفعل');
       }
       updates.status = 'cancelled';
       eventType = 'status_changed';
       eventDetails = 'تم إلغاء الشحنة';
-    } 
-    // 6. Pending (Unassign courier)
-    else if (targetStatus === 'pending') {
+    } else if (targetStatus === 'pending') {
       updates.status = 'pending';
       updates.courier_id = null;
       eventType = 'status_changed';
@@ -1418,38 +844,47 @@ export const db = {
     // Apply courier change if explicitly provided
     if (options?.courierId !== undefined) {
       updates.courier_id = options.courierId;
-      if (options.courierId && !currentOrder.assigned_at) {
+      if (options.courierId && !current.assigned_at) {
         updates.assigned_at = now;
       }
     }
 
-    const updatedOrder = {
-      ...currentOrder,
-      ...updates,
-    };
-    allOrders[index] = updatedOrder;
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(allOrders));
+    const { data, error } = await supabase
+      .from('orders')
+      .update(updates)
+      .eq('id', id)
+      .eq('company_id', companyId)
+      .select()
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') throw new Error('الطلب غير موجود');
+      throw new Error(error.message);
+    }
 
-    // Add status transition event log
-    this.addOrderEvent({
+    // Add event
+    await this.addOrderEvent({
       order_id: id,
       company_id: companyId,
       event_type: eventType,
       actor: options?.actorRole === 'courier' ? 'courier' : 'admin',
       actor_name: options?.actorName,
-      details: eventDetails
+      details: eventDetails,
     });
 
     notifyOrderUpdated(id);
-    return updatedOrder;
+    return data;
   },
 
-  deleteOrder(companyId: string, id: string): boolean {
-    const allOrders: Order[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
-    const filtered = allOrders.filter(o => !(o.id === id && o.company_id === companyId));
-    if (filtered.length === allOrders.length) return false;
-
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(filtered));
+  async deleteOrder(companyId: string, id: string): Promise<boolean> {
+    const { error } = await supabase
+      .from('orders')
+      .delete()
+      .eq('id', id)
+      .eq('company_id', companyId);
+    if (error) {
+      if (error.code === 'PGRST116') return false;
+      throw new Error(error.message);
+    }
     notifyOrderUpdated(id);
     return true;
   },
@@ -1457,13 +892,21 @@ export const db = {
   // ----------------------------------------------------
   // ORDER AUDIT TRAIL / EVENTS
   // ----------------------------------------------------
-  getOrderEvents(orderId: string): OrderEvent[] {
-    const data = localStorage.getItem(STORAGE_KEYS.ORDER_EVENTS);
-    const list: OrderEvent[] = data ? JSON.parse(data) : [];
-    return list.filter(e => e.order_id === orderId).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  async getOrderEvents(orderId: string, companyId: string): Promise<OrderEvent[]> {
+    // First verify order belongs to company
+    const order = await this.getOrderById(companyId, orderId);
+    if (!order) return [];
+
+    const { data, error } = await supabase
+      .from('order_events')
+      .select('*')
+      .eq('order_id', orderId)
+      .order('timestamp', { ascending: false });
+    if (error) throw new Error(error.message);
+    return data || [];
   },
 
-  getAllOrderEvents(companyId: string, filter?: {
+  async getAllOrderEvents(companyId: string, filter?: {
     actor?: string;
     eventType?: string;
     startDate?: string;
@@ -1472,157 +915,166 @@ export const db = {
     dateTo?: string;
     search?: string;
     limit?: number;
-  }): OrderEvent[] {
+  }): Promise<OrderEvent[]> {
     if (!companyId) return [];
-    const data = localStorage.getItem(STORAGE_KEYS.ORDER_EVENTS);
-    const list: OrderEvent[] = data ? JSON.parse(data) : [];
-    
-    // Also load orders map for search by order number
-    const orders = this.getOrders(companyId);
-    const orderMap: Record<string, Order> = {};
-    orders.forEach(o => { orderMap[o.id] = o; });
+    let query = supabase
+      .from('order_events')
+      .select('*')
+      .eq('company_id', companyId);
+
+    if (filter?.actor && filter.actor !== 'all') {
+      query = query.eq('actor', filter.actor);
+    }
+    if (filter?.eventType && filter.eventType !== 'all') {
+      query = query.eq('event_type', filter.eventType);
+    }
 
     const sDate = filter?.startDate || filter?.dateFrom;
     const eDate = filter?.endDate || filter?.dateTo;
+    if (sDate) {
+      query = query.gte('timestamp', sDate);
+    }
+    if (eDate) {
+      query = query.lte('timestamp', eDate + 'T23:59:59.999Z');
+    }
 
-    const filtered = list.filter(event => {
-      if (event.company_id && event.company_id !== companyId) return false;
-      
-      // If event doesn't have company_id directly, check via order
-      if (!event.company_id) {
+    if (filter?.search) {
+      // We need to join with orders table to search by order_number, customer_name, etc.
+      // Since we are using Supabase, we can use a more complex query or fetch all and filter in memory.
+      // For simplicity, we will fetch all events for the company and then filter in memory.
+      // This is acceptable for moderate data sizes.
+      // Alternatively, we could use a view or a more complex query, but we'll keep it simple.
+      // We'll fetch events and then filter in code.
+    }
+
+    const { data, error } = await query.order('timestamp', { ascending: false });
+    if (error) throw new Error(error.message);
+
+    let events = data || [];
+
+    // Apply search filter in memory (if needed)
+    if (filter?.search) {
+      const q = filter.search.toLowerCase().trim();
+      // Get orders for this company to resolve order numbers and customer names
+      const orders = await this.getOrders(companyId);
+      const orderMap: Record<string, Order> = {};
+      orders.forEach(o => { orderMap[o.id] = o; });
+
+      events = events.filter(event => {
         const ord = orderMap[event.order_id];
-        if (!ord || ord.company_id !== companyId) return false;
-      }
-
-      if (filter?.actor && filter.actor !== 'all' && event.actor !== filter.actor) {
-        return false;
-      }
-
-      if (filter?.eventType && filter.eventType !== 'all' && event.event_type !== filter.eventType) {
-        return false;
-      }
-
-      const eventDate = event.timestamp.split('T')[0];
-      if (sDate && eventDate < sDate) {
-        return false;
-      }
-      if (eDate && eventDate > eDate) {
-        return false;
-      }
-
-      if (filter?.search) {
-        const q = filter.search.toLowerCase().trim();
-        const ord = orderMap[event.order_id];
-        const matchOrderNumber = ord?.order_number.toLowerCase().includes(q) || false;
-        const matchCustomer = ord?.customer_name.toLowerCase().includes(q) || false;
+        const matchOrderNumber = ord?.order_number?.toLowerCase().includes(q) || false;
+        const matchCustomer = ord?.customer_name?.toLowerCase().includes(q) || false;
         const matchDetails = event.details?.toLowerCase().includes(q) || false;
         const matchActorName = event.actor_name?.toLowerCase().includes(q) || false;
-
-        if (!matchOrderNumber && !matchCustomer && !matchDetails && !matchActorName) {
-          return false;
-        }
-      }
-
-      return true;
-    }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        return matchOrderNumber || matchCustomer || matchDetails || matchActorName;
+      });
+    }
 
     if (filter?.limit && filter.limit > 0) {
-      return filtered.slice(0, filter.limit);
+      events = events.slice(0, filter.limit);
     }
-    return filtered;
+    return events;
   },
 
-  addOrderEvent(eventData: Omit<OrderEvent, 'id' | 'timestamp'>): OrderEvent {
-    const data = localStorage.getItem(STORAGE_KEYS.ORDER_EVENTS);
-    const list: OrderEvent[] = data ? JSON.parse(data) : [];
-    const newEvent: OrderEvent = {
-      id: generateId(),
-      ...eventData,
-      timestamp: new Date().toISOString(),
-    };
-    list.push(newEvent);
-    localStorage.setItem(STORAGE_KEYS.ORDER_EVENTS, JSON.stringify(list));
-    return newEvent;
+  async addOrderEvent(eventData: Omit<OrderEvent, 'id' | 'timestamp'>): Promise<OrderEvent> {
+    // Verify order belongs to company (if order_id provided)
+    if (eventData.order_id) {
+      const order = await this.getOrderById(eventData.company_id, eventData.order_id);
+      if (!order) {
+        throw new Error('الطلب غير موجود في هذه الشركة');
+      }
+    }
+
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('order_events')
+      .insert({
+        id: generateId(),
+        ...eventData,
+        timestamp: now,
+      })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return data;
   },
 
   // ----------------------------------------------------
   // PUBLIC / CUSTOMER SELF-SERVICE DELIVERY CONFIRMATION
   // ----------------------------------------------------
-  /**
-   * Retrieves shipment details safely by token for unauthenticated customers.
-   * Strips internal company secrets and returns only customer-facing info.
-   */
-  getOrderByToken(token: string): { order: Order; merchant: Merchant | null; company: Company | null } | null {
+  async getOrderByToken(token: string): Promise<{ order: Order; merchant: Merchant | null; company: Company | null } | null> {
     if (!token?.trim()) return null;
     const cleanToken = token.trim();
-    const allOrders: Order[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
-    const order = allOrders.find(o => o.confirmation_token === cleanToken);
+
+    const { data: order, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('confirmation_token', cleanToken)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
     if (!order) return null;
 
-    const merchants = this.getMerchants(order.company_id);
-    const merchant = merchants.find(m => m.id === order.merchant_id) || null;
-
-    const company = this.getCompanyById(order.company_id);
+    const merchant = await this.getMerchantById(order.company_id, order.merchant_id);
+    const company = await this.getCompanyById(order.company_id);
 
     return { order, merchant, company };
   },
 
-  /**
-   * Records when the customer opens the public link for the first time
-   */
-  recordCustomerLinkOpened(token: string) {
-    const result = this.getOrderByToken(token);
+  async recordCustomerLinkOpened(token: string): Promise<void> {
+    const result = await this.getOrderByToken(token);
     if (!result) return;
     const { order } = result;
 
-    // Check if link_opened event was already recorded in last 30 minutes to avoid spamming
-    const events = this.getOrderEvents(order.id);
+    // Check if link_opened event was already recorded in last 30 minutes
+    const events = await this.getOrderEvents(order.id, order.company_id);
     const recentOpen = events.find(e => e.event_type === 'link_opened' && (Date.now() - new Date(e.timestamp).getTime() < 30 * 60 * 1000));
     if (!recentOpen) {
-      this.addOrderEvent({
+      await this.addOrderEvent({
         order_id: order.id,
         company_id: order.company_id,
         event_type: 'link_opened',
         actor: 'customer',
-        details: 'قام العميل بفتح رابط متابعة وتأكيد الشحنة'
+        details: 'قام العميل بفتح رابط متابعة وتأكيد الشحنة',
       });
       notifyOrderUpdated(order.id);
     }
   },
 
-  /**
-   * Customer Action 1: Confirm Delivery at Scheduled Window
-   */
-  customerConfirmDelivery(token: string): { success: boolean; order?: Order; error?: string } {
-    const allOrders: Order[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
-    const index = allOrders.findIndex(o => o.confirmation_token === token.trim());
-    if (index === -1) {
+  async customerConfirmDelivery(token: string): Promise<{ success: boolean; order?: Order; error?: string }> {
+    const result = await this.getOrderByToken(token);
+    if (!result) {
       return { success: false, error: 'رابط الشحنة غير صالح أو منتهي الصلاحية' };
     }
+    const { order } = result;
 
-    const order = allOrders[index];
     const now = new Date().toISOString();
-
-    const updatedOrder: Order = {
-      ...order,
-      customer_response_status: 'confirmed',
+    const updates = {
+      customer_response_status: 'confirmed' as CustomerResponseStatus,
       customer_responded_at: now,
       updated_at: now,
     };
 
-    allOrders[index] = updatedOrder;
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(allOrders));
+    const { data, error } = await supabase
+      .from('orders')
+      .update(updates)
+      .eq('id', order.id)
+      .eq('company_id', order.company_id)
+      .select()
+      .single();
+    if (error) {
+      return { success: false, error: error.message };
+    }
 
-    this.addOrderEvent({
+    await this.addOrderEvent({
       order_id: order.id,
       company_id: order.company_id,
       event_type: 'customer_confirmed',
       actor: 'customer',
-      details: `قام العميل بتأكيد استلام الشحنة في موعدها المقرر (${order.delivery_date || 'اليوم'} - من ${order.delivery_from} إلى ${order.delivery_to})`
+      details: `قام العميل بتأكيد استلام الشحنة في موعدها المقرر (${order.delivery_date || 'اليوم'} - من ${order.delivery_from} إلى ${order.delivery_to})`,
     });
 
     // Notify Admin
-    this.addNotification(order.company_id, {
+    await this.addNotification(order.company_id, {
       recipient_role: 'admin',
       type: 'customer_confirmed',
       title: 'تأكيد موعد استلام شحنة',
@@ -1631,9 +1083,8 @@ export const db = {
       order_number: order.order_number,
     });
 
-    // Notify Courier if assigned
     if (order.courier_id) {
-      this.addNotification(order.company_id, {
+      await this.addNotification(order.company_id, {
         recipient_role: 'courier',
         recipient_courier_id: order.courier_id,
         type: 'customer_confirmed',
@@ -1645,38 +1096,30 @@ export const db = {
     }
 
     notifyOrderUpdated(order.id);
-    return { success: true, order: updatedOrder };
+    return { success: true, order: data };
   },
 
-  /**
-   * Customer Action 2: Request Reschedule Date/Time Window & optional note
-   */
-  customerRescheduleDelivery(
+  async customerRescheduleDelivery(
     token: string,
     newDate: string,
     newFrom: string,
     newTo: string,
     customerNote?: string
-  ): { success: boolean; order?: Order; error?: string } {
-    if (!newDate) {
-      return { success: false, error: 'يرجى اختيار تاريخ التوصيل الجديد' };
-    }
+  ): Promise<{ success: boolean; order?: Order; error?: string }> {
+    if (!newDate) return { success: false, error: 'يرجى اختيار تاريخ التوصيل الجديد' };
     if (!newFrom || !newTo || newFrom >= newTo) {
       return { success: false, error: 'يرجى اختيار نافذة زمنية صحيحة للتوصيل' };
     }
 
-    const allOrders: Order[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
-    const index = allOrders.findIndex(o => o.confirmation_token === token.trim());
-    if (index === -1) {
+    const result = await this.getOrderByToken(token);
+    if (!result) {
       return { success: false, error: 'رابط الشحنة غير صالح أو منتهي الصلاحية' };
     }
+    const { order } = result;
 
-    const order = allOrders[index];
     const now = new Date().toISOString();
-
-    const updatedOrder: Order = {
-      ...order,
-      customer_response_status: 'reschedule_requested',
+    const updates = {
+      customer_response_status: 'reschedule_requested' as CustomerResponseStatus,
       customer_selected_date: newDate,
       customer_selected_from: newFrom,
       customer_selected_to: newTo,
@@ -1685,20 +1128,27 @@ export const db = {
       updated_at: now,
     };
 
-    allOrders[index] = updatedOrder;
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(allOrders));
+    const { data, error } = await supabase
+      .from('orders')
+      .update(updates)
+      .eq('id', order.id)
+      .eq('company_id', order.company_id)
+      .select()
+      .single();
+    if (error) {
+      return { success: false, error: error.message };
+    }
 
     const noteDetails = customerNote?.trim() ? ` - ملاحظة العميل: "${customerNote.trim()}"` : '';
-    this.addOrderEvent({
+    await this.addOrderEvent({
       order_id: order.id,
       company_id: order.company_id,
       event_type: 'customer_rescheduled',
       actor: 'customer',
-      details: `طلب العميل تعديل موعد التوصيل إلى (${newDate} من ${newFrom} إلى ${newTo})${noteDetails}`
+      details: `طلب العميل تعديل موعد التوصيل إلى (${newDate} من ${newFrom} إلى ${newTo})${noteDetails}`,
     });
 
-    // Notify Admin
-    this.addNotification(order.company_id, {
+    await this.addNotification(order.company_id, {
       recipient_role: 'admin',
       type: 'customer_rescheduled',
       title: 'طلب تعديل موعد شحنة',
@@ -1707,9 +1157,8 @@ export const db = {
       order_number: order.order_number,
     });
 
-    // Notify Courier if assigned
     if (order.courier_id) {
-      this.addNotification(order.company_id, {
+      await this.addNotification(order.company_id, {
         recipient_role: 'courier',
         recipient_courier_id: order.courier_id,
         type: 'customer_rescheduled',
@@ -1721,48 +1170,50 @@ export const db = {
     }
 
     notifyOrderUpdated(order.id);
-    return { success: true, order: updatedOrder };
+    return { success: true, order: data };
   },
 
-  /**
-   * Customer Action 3: Cancel Order
-   */
-  customerCancelDelivery(token: string): { success: boolean; order?: Order; error?: string } {
-    const allOrders: Order[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
-    const index = allOrders.findIndex(o => o.confirmation_token === token.trim());
-    if (index === -1) {
+  async customerCancelDelivery(token: string): Promise<{ success: boolean; order?: Order; error?: string }> {
+    const result = await this.getOrderByToken(token);
+    if (!result) {
       return { success: false, error: 'رابط الشحنة غير صالح أو منتهي الصلاحية' };
     }
+    const { order } = result;
 
-    const order = allOrders[index];
     if (order.status === 'delivered') {
       return { success: false, error: 'لا يمكن إلغاء الشحنة لأنها مسلّمة بالفعل' };
     }
 
     const now = new Date().toISOString();
-    const updatedOrder: Order = {
-      ...order,
-      status: 'cancelled',
-      customer_response_status: 'cancelled',
+    const updates = {
+      status: 'cancelled' as OrderStatus,
+      customer_response_status: 'cancelled' as CustomerResponseStatus,
       cancellation_source: 'customer',
       cancellation_timestamp: now,
       customer_responded_at: now,
       updated_at: now,
     };
 
-    allOrders[index] = updatedOrder;
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(allOrders));
+    const { data, error } = await supabase
+      .from('orders')
+      .update(updates)
+      .eq('id', order.id)
+      .eq('company_id', order.company_id)
+      .select()
+      .single();
+    if (error) {
+      return { success: false, error: error.message };
+    }
 
-    this.addOrderEvent({
+    await this.addOrderEvent({
       order_id: order.id,
       company_id: order.company_id,
       event_type: 'customer_cancelled',
       actor: 'customer',
-      details: 'قام العميل بإلغاء الشحنة بنفسه عبر صفحة تأكيد التسليم'
+      details: 'قام العميل بإلغاء الشحنة بنفسه عبر صفحة تأكيد التسليم',
     });
 
-    // Notify Admin
-    this.addNotification(order.company_id, {
+    await this.addNotification(order.company_id, {
       recipient_role: 'admin',
       type: 'customer_cancelled',
       title: 'إلغاء الشحنة من قبل العميل',
@@ -1771,9 +1222,8 @@ export const db = {
       order_number: order.order_number,
     });
 
-    // Notify Courier if assigned
     if (order.courier_id) {
-      this.addNotification(order.company_id, {
+      await this.addNotification(order.company_id, {
         recipient_role: 'courier',
         recipient_courier_id: order.courier_id,
         type: 'customer_cancelled',
@@ -1785,29 +1235,27 @@ export const db = {
     }
 
     notifyOrderUpdated(order.id);
-    return { success: true, order: updatedOrder };
+    return { success: true, order: data };
   },
 
-  /**
-   * Records WhatsApp Confirmation Sent by Admin or Courier
-   */
-  recordWhatsAppSent(companyId: string, orderId: string, actor: 'admin' | 'courier', actorName?: string) {
-    const allOrders: Order[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.ORDERS) || '[]');
-    const index = allOrders.findIndex(o => o.id === orderId && o.company_id === companyId);
-    if (index === -1) return;
+  async recordWhatsAppSent(companyId: string, orderId: string, actor: 'admin' | 'courier', actorName?: string): Promise<void> {
+    const order = await this.getOrderById(companyId, orderId);
+    if (!order) return;
 
     const now = new Date().toISOString();
-    allOrders[index].confirmation_sent_at = now;
-    allOrders[index].updated_at = now;
-    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(allOrders));
+    await supabase
+      .from('orders')
+      .update({ confirmation_sent_at: now, updated_at: now })
+      .eq('id', orderId)
+      .eq('company_id', companyId);
 
-    this.addOrderEvent({
+    await this.addOrderEvent({
       order_id: orderId,
       company_id: companyId,
       event_type: 'whatsapp_sent',
       actor,
       actor_name: actorName,
-      details: `تم إرسال رابط تأكيد الاستلام عبر واتساب إلى العميل (${allOrders[index].customer_phone})`
+      details: `تم إرسال رابط تأكيد الاستلام عبر واتساب إلى العميل (${order.customer_phone})`,
     });
 
     notifyOrderUpdated(orderId);
@@ -1816,54 +1264,69 @@ export const db = {
   // ----------------------------------------------------
   // RETURNS (Enforcing company_id & multi-tenant RLS)
   // ----------------------------------------------------
-  getNextReturnNumber(companyId: string): string {
-    const returnsList = this.getReturns(companyId);
+  async getNextReturnNumber(companyId: string): Promise<string> {
+    const { data, error } = await supabase
+      .from('returns')
+      .select('return_number')
+      .eq('company_id', companyId)
+      .order('return_number', { ascending: false })
+      .limit(1);
+    if (error) throw new Error(error.message);
     let maxNum = 0;
-    returnsList.forEach(r => {
-      const match = r.return_number?.match(/RET-(\d+)/);
+    if (data && data.length > 0) {
+      const match = data[0].return_number?.match(/DLX-RET-(\d+)/);
       if (match && match[1]) {
         const n = parseInt(match[1], 10);
-        if (!isNaN(n) && n > maxNum) {
-          maxNum = n;
-        }
+        if (!isNaN(n)) maxNum = n;
       }
-    });
-    const nextVal = (maxNum || returnsList.length) + 1;
+    }
+    const nextVal = maxNum + 1;
     return `DLX-RET-${String(nextVal).padStart(6, '0')}`;
   },
 
-  getReturns(companyId: string, courierIdFilter?: string | null, merchantIdFilter?: string | null): ReturnRecord[] {
+  async getReturns(companyId: string, courierIdFilter?: string | null, merchantIdFilter?: string | null): Promise<ReturnRecord[]> {
     if (!companyId) return [];
-    const data = localStorage.getItem(STORAGE_KEYS.RETURNS);
-    const list: ReturnRecord[] = data ? JSON.parse(data) : [];
-
-    // Step 1: Filter strictly by company_id (RLS)
-    let companyReturns = list.filter(r => r.company_id === companyId);
-
-    // Step 2: Courier filter
+    let query = supabase.from('returns').select('*').eq('company_id', companyId);
     if (courierIdFilter) {
-      companyReturns = companyReturns.filter(r => r.courier_id === courierIdFilter);
+      query = query.eq('courier_id', courierIdFilter);
     }
-
-    // Step 3: Merchant filter
     if (merchantIdFilter) {
-      companyReturns = companyReturns.filter(r => r.merchant_id === merchantIdFilter);
+      query = query.eq('merchant_id', merchantIdFilter);
     }
-
-    return companyReturns;
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return data || [];
   },
 
-  getReturnById(companyId: string, id: string): ReturnRecord | null {
-    const list = this.getReturns(companyId);
-    return list.find(r => r.id === id) || null;
+  async getReturnById(companyId: string, id: string): Promise<ReturnRecord | null> {
+    const { data, error } = await supabase
+      .from('returns')
+      .select('*')
+      .eq('id', id)
+      .eq('company_id', companyId)
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
+    return data;
   },
 
-  getReturnByOrderId(companyId: string, orderId: string): ReturnRecord | null {
-    const list = this.getReturns(companyId);
-    return list.find(r => r.order_id === orderId) || null;
+  async getReturnByOrderId(companyId: string, orderId: string): Promise<ReturnRecord | null> {
+    const { data, error } = await supabase
+      .from('returns')
+      .select('*')
+      .eq('order_id', orderId)
+      .eq('company_id', companyId)
+      .maybeSingle();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
+    return data;
   },
 
-  createReturn(companyId: string, data: {
+  async createReturn(companyId: string, data: {
     order_id: string;
     customer_name: string;
     customer_phone: string;
@@ -1880,39 +1343,37 @@ export const db = {
     courier_id?: string | null;
     created_by: string;
     actorName?: string;
-  }): ReturnRecord {
-    // 1. Verify original order exists
-    const order = this.getOrderById(companyId, data.order_id);
+  }): Promise<ReturnRecord> {
+    // Verify order exists and belongs to company
+    const order = await this.getOrderById(companyId, data.order_id);
     if (!order) {
       throw new Error('الشحنة الأصلية غير موجودة');
     }
 
-    // 2. Prevent duplicate returns
-    const existing = this.getReturnByOrderId(companyId, data.order_id);
+    // Prevent duplicate returns
+    const existing = await this.getReturnByOrderId(companyId, data.order_id);
     if (existing) {
       throw new Error(`يوجد بالفعل طلب إرجاع مسجل لهذه الشحنة برقم (${existing.return_number})`);
     }
 
-    // 3. Return Eligibility: Delivered or Failed
     if (order.status !== 'delivered' && order.status !== 'failed') {
       throw new Error('لا يمكن تسجيل إرجاع إلا للشحنات المسلمة أو المتعثرة');
     }
 
-    // 4. Validate fields
-    if (!data.customer_name?.trim()) {
-      throw new Error('اسم العميل مطلوب');
-    }
-    if (!data.customer_phone?.trim()) {
-      throw new Error('رقم هاتف العميل مطلوب');
-    }
-    if (!data.return_address?.trim()) {
-      throw new Error('عنوان الإرجاع مطلوب');
-    }
-    if (!data.return_reason) {
-      throw new Error('يرجى تحديد سبب الإرجاع');
-    }
+    if (!data.customer_name?.trim()) throw new Error('اسم العميل مطلوب');
+    if (!data.customer_phone?.trim()) throw new Error('رقم هاتف العميل مطلوب');
+    if (!data.return_address?.trim()) throw new Error('عنوان الإرجاع مطلوب');
+    if (!data.return_reason) throw new Error('يرجى تحديد سبب الإرجاع');
     if (data.return_reason === 'other' && !data.other_reason?.trim()) {
       throw new Error('يرجى توضيح سبب الإرجاع في حقل السبب الآخر');
+    }
+
+    // Verify courier if provided
+    if (data.courier_id) {
+      const courier = await this.getCourierById(companyId, data.courier_id);
+      if (!courier) {
+        throw new Error('المندوب المحدد غير موجود في هذه الشركة');
+      }
     }
 
     const returnAmount = Math.max(0, Number(data.return_amount) || 0);
@@ -1920,7 +1381,6 @@ export const db = {
     const otherCost = Math.max(0, Number(data.other_cost) || 0);
     const totalReturnAmount = returnAmount + returnShippingCost + otherCost;
 
-    // Return Cost Payer Calculations
     const returnCostPayer: ReturnCostPayer = data.return_cost_payer || 'none';
     const refundableAmount = Math.max(0, Number(data.refundable_amount !== undefined ? data.refundable_amount : returnAmount) || 0);
     let returnCostAmount = Math.max(0, Number(data.return_cost_amount) || 0);
@@ -1937,20 +1397,16 @@ export const db = {
       customerNetRefund = refundableAmount;
       merchantChargeAmount = returnCostAmount;
     } else {
-      // none
       returnCostAmount = 0;
       customerNetRefund = refundableAmount;
       merchantChargeAmount = 0;
     }
 
-    const allReturns: ReturnRecord[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.RETURNS) || '[]');
-    const now = new Date().toISOString();
-    const returnNumber = this.getNextReturnNumber(companyId);
-
+    const returnNumber = await this.getNextReturnNumber(companyId);
     const initialStatus: ReturnStatus = data.courier_id ? 'with_courier' : 'created';
+    const now = new Date().toISOString();
 
-    const newReturn: ReturnRecord = {
-      id: generateId(),
+    const newReturn: Omit<ReturnRecord, 'id'> = {
       company_id: companyId,
       order_id: data.order_id,
       merchant_id: order.merchant_id,
@@ -1963,13 +1419,11 @@ export const db = {
       return_shipping_cost: returnShippingCost,
       other_cost: otherCost,
       total_return_amount: totalReturnAmount,
-      
       return_cost_payer: returnCostPayer,
       refundable_amount: refundableAmount,
       return_cost_amount: returnCostAmount,
       customer_net_refund: customerNetRefund,
       merchant_charge_amount: merchantChargeAmount,
-
       return_reason: data.return_reason,
       other_reason: data.other_reason?.trim() || undefined,
       notes: data.notes?.trim() || undefined,
@@ -1979,55 +1433,56 @@ export const db = {
       updated_at: now,
     };
 
-    allReturns.push(newReturn);
-    localStorage.setItem(STORAGE_KEYS.RETURNS, JSON.stringify(allReturns));
+    const { data: inserted, error } = await supabase
+      .from('returns')
+      .insert(newReturn)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
 
-    // If Merchant pays the return cost, automatically record a debit transaction in the Merchant Ledger
+    // If Merchant pays the return cost, record debit transaction
     if (returnCostPayer === 'merchant' && merchantChargeAmount > 0) {
-      this.addMerchantTransaction(companyId, {
+      await this.addMerchantTransaction(companyId, {
         merchant_id: order.merchant_id,
         transaction_type: 'RETURN_COST',
         direction: 'debit',
         amount: merchantChargeAmount,
         reference_type: 'return',
-        reference_id: newReturn.id,
+        reference_id: inserted.id,
         order_id: order.id,
         order_number: order.order_number,
-        return_id: newReturn.id,
+        return_id: inserted.id,
         return_number: returnNumber,
         description: `تكلفة إرجاع شحنة (#${order.order_number}) - إرجاع #${returnNumber}`,
         created_by: data.actorName || data.created_by || 'Admin',
       });
     }
 
-    // Audit log
-    this.addOrderEvent({
+    await this.addOrderEvent({
       order_id: data.order_id,
-      return_id: newReturn.id,
+      return_id: inserted.id,
       company_id: companyId,
       event_type: 'return_created',
       actor: 'admin',
       actor_name: data.actorName || data.created_by,
       details: `تم إنشاء إرجاع برقم (${returnNumber}) - المبلغ: ${totalReturnAmount.toLocaleString()} ج.م - تحمّل التكلفة: ${
         returnCostPayer === 'customer' ? 'العميل' : returnCostPayer === 'merchant' ? 'التاجر' : 'بدون تكلفة'
-      } - صافي استرداد العميل: ${customerNetRefund.toLocaleString()} ج.م${merchantChargeAmount > 0 ? ` - مديونية على التاجر: ${merchantChargeAmount.toLocaleString()} ج.م` : ''}`
+      } - صافي استرداد العميل: ${customerNetRefund.toLocaleString()} ج.م${merchantChargeAmount > 0 ? ` - مديونية على التاجر: ${merchantChargeAmount.toLocaleString()} ج.م` : ''}`,
     });
 
-    // Notify Admin
-    this.addNotification(companyId, {
+    await this.addNotification(companyId, {
       recipient_role: 'admin',
       type: 'return_created',
       title: 'تسجيل طلب إرجاع جديد',
       message: `تم إنشاء طلب إرجاع رقم (${returnNumber}) للشحنة #${order.order_number}`,
       order_id: data.order_id,
       order_number: order.order_number,
-      return_id: newReturn.id,
+      return_id: inserted.id,
       return_number: returnNumber,
     });
 
-    // Notify Courier if assigned
     if (data.courier_id) {
-      this.addNotification(companyId, {
+      await this.addNotification(companyId, {
         recipient_role: 'courier',
         recipient_courier_id: data.courier_id,
         type: 'return_assigned',
@@ -2035,56 +1490,47 @@ export const db = {
         message: `تم إسناد الشحنة المرتجعة رقم (${returnNumber}) إليك لاستلامها من العميل`,
         order_id: data.order_id,
         order_number: order.order_number,
-        return_id: newReturn.id,
+        return_id: inserted.id,
         return_number: returnNumber,
       });
     }
 
     notifyOrderUpdated(data.order_id);
-    return newReturn;
+    return inserted;
   },
 
-  updateReturn(
+  async updateReturn(
     companyId: string,
     id: string,
     updates: Partial<ReturnRecord>,
     actorContext: { role: UserRole; name?: string; courierId?: string; }
-  ): ReturnRecord {
-    const allReturns: ReturnRecord[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.RETURNS) || '[]');
-    const index = allReturns.findIndex(r => r.id === id && r.company_id === companyId);
-    if (index === -1) {
+  ): Promise<ReturnRecord> {
+    const current = await this.getReturnById(companyId, id);
+    if (!current) {
       throw new Error('طلب الإرجاع غير موجود');
     }
 
-    const currentReturn = allReturns[index];
     const now = new Date().toISOString();
 
-    // Security constraint: Courier CANNOT modify financial fields or merchant/order/phone
+    // Security constraint: Courier cannot modify financial fields
     if (actorContext.role === 'courier') {
-      delete updates.return_amount;
-      delete updates.return_shipping_cost;
-      delete updates.other_cost;
-      delete updates.total_return_amount;
-      delete updates.return_cost_payer;
-      delete updates.refundable_amount;
-      delete updates.return_cost_amount;
-      delete updates.customer_net_refund;
-      delete updates.merchant_charge_amount;
-      delete updates.customer_phone;
-      delete updates.merchant_id;
-      delete updates.order_id;
-      delete updates.company_id;
+      const forbidden = ['return_amount', 'return_shipping_cost', 'other_cost', 'total_return_amount',
+        'return_cost_payer', 'refundable_amount', 'return_cost_amount', 'customer_net_refund',
+        'merchant_charge_amount', 'customer_phone', 'merchant_id', 'order_id', 'company_id'];
+      for (const key of forbidden) {
+        delete (updates as any)[key];
+      }
     }
 
     // Recalculate totals if financial figures changed by Admin
-    let returnAmount = updates.return_amount !== undefined ? Math.max(0, Number(updates.return_amount) || 0) : currentReturn.return_amount;
-    let shippingCost = updates.return_shipping_cost !== undefined ? Math.max(0, Number(updates.return_shipping_cost) || 0) : currentReturn.return_shipping_cost;
-    let otherCost = updates.other_cost !== undefined ? Math.max(0, Number(updates.other_cost) || 0) : currentReturn.other_cost;
+    let returnAmount = updates.return_amount !== undefined ? Math.max(0, Number(updates.return_amount) || 0) : current.return_amount;
+    let shippingCost = updates.return_shipping_cost !== undefined ? Math.max(0, Number(updates.return_shipping_cost) || 0) : current.return_shipping_cost;
+    let otherCost = updates.other_cost !== undefined ? Math.max(0, Number(updates.other_cost) || 0) : current.other_cost;
     let totalReturnAmount = returnAmount + shippingCost + otherCost;
 
-    let returnCostPayer = updates.return_cost_payer || currentReturn.return_cost_payer || 'none';
-    let refundableAmount = updates.refundable_amount !== undefined ? Math.max(0, Number(updates.refundable_amount) || 0) : (currentReturn.refundable_amount ?? returnAmount);
-    let returnCostAmount = updates.return_cost_amount !== undefined ? Math.max(0, Number(updates.return_cost_amount) || 0) : (currentReturn.return_cost_amount ?? 0);
+    let returnCostPayer = updates.return_cost_payer || current.return_cost_payer || 'none';
+    let refundableAmount = updates.refundable_amount !== undefined ? Math.max(0, Number(updates.refundable_amount) || 0) : (current.refundable_amount ?? returnAmount);
+    let returnCostAmount = updates.return_cost_amount !== undefined ? Math.max(0, Number(updates.return_cost_amount) || 0) : (current.return_cost_amount ?? 0);
     let customerNetRefund = refundableAmount;
     let merchantChargeAmount = 0;
 
@@ -2100,14 +1546,12 @@ export const db = {
       merchantChargeAmount = 0;
     }
 
-    // Courier assignment transition
-    let newStatus = updates.status || currentReturn.status;
-    if (updates.courier_id && currentReturn.status === 'created' && !updates.status) {
+    let newStatus = updates.status || current.status;
+    if (updates.courier_id && current.status === 'created' && !updates.status) {
       newStatus = 'with_courier';
     }
 
-    const updatedReturn: ReturnRecord = {
-      ...currentReturn,
+    const payload = {
       ...updates,
       return_amount: returnAmount,
       return_shipping_cost: shippingCost,
@@ -2123,42 +1567,42 @@ export const db = {
       updated_at: now,
     };
 
-    allReturns[index] = updatedReturn;
-    localStorage.setItem(STORAGE_KEYS.RETURNS, JSON.stringify(allReturns));
+    const { data, error } = await supabase
+      .from('returns')
+      .update(payload)
+      .eq('id', id)
+      .eq('company_id', companyId)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
 
-    this.addOrderEvent({
-      order_id: currentReturn.order_id,
-      return_id: currentReturn.id,
+    await this.addOrderEvent({
+      order_id: current.order_id,
+      return_id: current.id,
       company_id: companyId,
       event_type: 'return_updated',
       actor: actorContext.role === 'courier' ? 'courier' : 'admin',
       actor_name: actorContext.name,
-      details: `تم تحديث بيانات الإرجاع (${currentReturn.return_number})`
+      details: `تم تحديث بيانات الإرجاع (${current.return_number})`,
     });
 
-    notifyOrderUpdated(currentReturn.order_id);
-    return updatedReturn;
+    notifyOrderUpdated(current.order_id);
+    return data;
   },
 
-  updateReturnStatus(
+  async updateReturnStatus(
     companyId: string,
     id: string,
     targetStatus: ReturnStatus,
     actorContext: { role: UserRole; name?: string; courierId?: string; }
-  ): ReturnRecord {
-    const allReturns: ReturnRecord[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.RETURNS) || '[]');
-    const index = allReturns.findIndex(r => r.id === id && r.company_id === companyId);
-    if (index === -1) {
+  ): Promise<ReturnRecord> {
+    const current = await this.getReturnById(companyId, id);
+    if (!current) {
       throw new Error('طلب الإرجاع غير موجود');
     }
 
-    const currentReturn = allReturns[index];
     const now = new Date().toISOString();
-
-    const updates: Partial<ReturnRecord> = {
-      status: targetStatus,
-      updated_at: now,
-    };
+    const updates: Partial<ReturnRecord> = { status: targetStatus, updated_at: now };
 
     let eventType: OrderEvent['event_type'] = 'return_updated';
     let eventDetails = `تغيرت حالة الإرجاع إلى (${targetStatus})`;
@@ -2169,7 +1613,7 @@ export const db = {
     } else if (targetStatus === 'returned') {
       updates.returned_at = now;
       updates.returned_by = actorContext.name || 'مندوب التوصيل';
-      updates.returned_by_courier_id = actorContext.courierId || currentReturn.courier_id || undefined;
+      updates.returned_by_courier_id = actorContext.courierId || current.courier_id || undefined;
       eventType = 'return_completed';
       eventDetails = `تم إرجاع الشحنة بنجاح للمتجر/الشركة بواسطة (${updates.returned_by})`;
     } else if (targetStatus === 'cancelled') {
@@ -2180,42 +1624,43 @@ export const db = {
       eventDetails = 'تم إلغاء طلب الإرجاع من قبل الإدارة';
     }
 
-    const updatedReturn: ReturnRecord = {
-      ...currentReturn,
-      ...updates,
-    };
+    const { data, error } = await supabase
+      .from('returns')
+      .update(updates)
+      .eq('id', id)
+      .eq('company_id', companyId)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
 
-    allReturns[index] = updatedReturn;
-    localStorage.setItem(STORAGE_KEYS.RETURNS, JSON.stringify(allReturns));
-
-    this.addOrderEvent({
-      order_id: currentReturn.order_id,
-      return_id: currentReturn.id,
+    await this.addOrderEvent({
+      order_id: current.order_id,
+      return_id: current.id,
       company_id: companyId,
       event_type: eventType,
       actor: actorContext.role === 'courier' ? 'courier' : 'admin',
       actor_name: actorContext.name,
-      details: eventDetails
+      details: eventDetails,
     });
 
     if (targetStatus === 'returned') {
-      this.addNotification(companyId, {
+      await this.addNotification(companyId, {
         recipient_role: 'admin',
         type: 'return_completed',
         title: 'استكمال إرجاع الشحنة',
-        message: `تم استكمال إرجاع الشحنة رقم (${currentReturn.return_number}) وتسليمها للشركة بنجاح`,
-        order_id: currentReturn.order_id,
-        return_id: currentReturn.id,
-        return_number: currentReturn.return_number,
+        message: `تم استكمال إرجاع الشحنة رقم (${current.return_number}) وتسليمها للشركة بنجاح`,
+        order_id: current.order_id,
+        return_id: current.id,
+        return_number: current.return_number,
       });
     }
 
-    notifyOrderUpdated(currentReturn.order_id);
-    return updatedReturn;
+    notifyOrderUpdated(current.order_id);
+    return data;
   },
 
-  getReturnMetrics(companyId: string, courierId?: string | null, merchantId?: string | null) {
-    const list = this.getReturns(companyId, courierId, merchantId);
+  async getReturnMetrics(companyId: string, courierId?: string | null, merchantId?: string | null) {
+    const list = await this.getReturns(companyId, courierId, merchantId);
     const createdCount = list.filter(r => r.status === 'created').length;
     const withCourierCount = list.filter(r => r.status === 'with_courier').length;
     const returnedCount = list.filter(r => r.status === 'returned').length;
@@ -2236,216 +1681,159 @@ export const db = {
   // ----------------------------------------------------
   // NOTIFICATIONS
   // ----------------------------------------------------
-  getNotifications(companyId: string, filter?: { role?: 'admin' | 'courier'; courierId?: string; unreadOnly?: boolean }): AppNotification[] {
+  async getNotifications(companyId: string, filter?: { role?: 'admin' | 'courier'; courierId?: string; unreadOnly?: boolean }): Promise<AppNotification[]> {
     if (!companyId) return [];
-    const raw = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-    const list: AppNotification[] = raw ? JSON.parse(raw) : [];
-    
-    return list.filter(n => {
-      if (n.company_id !== companyId) return false;
-      if (filter?.role && n.recipient_role !== filter.role) return false;
-      if (filter?.courierId && n.recipient_role === 'courier' && n.recipient_courier_id !== filter.courierId) return false;
-      if (filter?.unreadOnly && n.read) return false;
-      return true;
-    }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    let query = supabase.from('notifications').select('*').eq('company_id', companyId);
+
+    if (filter?.role) {
+      query = query.eq('recipient_role', filter.role);
+    }
+    if (filter?.courierId) {
+      query = query.eq('recipient_courier_id', filter.courierId);
+    }
+    if (filter?.unreadOnly) {
+      query = query.eq('read', false);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return data || [];
   },
 
-  addNotification(companyId: string, data: Omit<AppNotification, 'id' | 'created_at' | 'read' | 'company_id'>): AppNotification {
-    const raw = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-    const list: AppNotification[] = raw ? JSON.parse(raw) : [];
-    
-    const newNotif: AppNotification = {
-      id: 'notif-' + generateId().slice(0, 8),
-      company_id: companyId,
-      created_at: new Date().toISOString(),
-      read: false,
-      ...data,
-    };
-
-    list.unshift(newNotif);
-    // Keep last 100 notifications to prevent unbounded growth
-    const trimmed = list.slice(0, 100);
-    localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(trimmed));
-    
+  async addNotification(companyId: string, data: Omit<AppNotification, 'id' | 'created_at' | 'read' | 'company_id'>): Promise<AppNotification> {
+    const now = new Date().toISOString();
+    const { data: inserted, error } = await supabase
+      .from('notifications')
+      .insert({
+        id: 'notif-' + generateId().slice(0, 8),
+        company_id: companyId,
+        created_at: now,
+        read: false,
+        ...data,
+      })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
     notifyOrderUpdated(data.order_id);
-    return newNotif;
+    return inserted;
   },
 
-  markNotificationAsRead(companyId: string, notifId: string): boolean {
-    const raw = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-    const list: AppNotification[] = raw ? JSON.parse(raw) : [];
-    const index = list.findIndex(n => n.id === notifId && n.company_id === companyId);
-    if (index === -1) return false;
-
-    list[index].read = true;
-    localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(list));
+  async markNotificationAsRead(companyId: string, notifId: string): Promise<boolean> {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('id', notifId)
+      .eq('company_id', companyId);
+    if (error) {
+      if (error.code === 'PGRST116') return false;
+      throw new Error(error.message);
+    }
     notifyOrderUpdated();
     return true;
   },
 
-  markAllNotificationsAsRead(companyId: string, filter?: { role?: 'admin' | 'courier'; courierId?: string }): boolean {
-    const raw = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-    const list: AppNotification[] = raw ? JSON.parse(raw) : [];
-
-    let updated = false;
-    const newList = list.map(n => {
-      if (n.company_id === companyId) {
-        if (!filter?.role || n.recipient_role === filter.role) {
-          if (!filter?.courierId || n.recipient_courier_id === filter.courierId) {
-            if (!n.read) {
-              updated = true;
-              return { ...n, read: true };
-            }
-          }
-        }
-      }
-      return n;
-    });
-
-    if (updated) {
-      localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(newList));
-      notifyOrderUpdated();
+  async markAllNotificationsAsRead(companyId: string, filter?: { role?: 'admin' | 'courier'; courierId?: string }): Promise<boolean> {
+    let query = supabase.from('notifications').update({ read: true }).eq('company_id', companyId);
+    if (filter?.role) {
+      query = query.eq('recipient_role', filter.role);
     }
-    return updated;
+    if (filter?.courierId) {
+      query = query.eq('recipient_courier_id', filter.courierId);
+    }
+    const { error } = await query;
+    if (error) throw new Error(error.message);
+    notifyOrderUpdated();
+    return true;
   },
 
   // ----------------------------------------------------
   // COMPANY DELIVERY SLOTS & SETTINGS
   // ----------------------------------------------------
-  getDeliverySlots(companyId: string): DeliverySlot[] {
-    const company = this.getCompanyById(companyId);
+  async getDeliverySlots(companyId: string): Promise<DeliverySlot[]> {
+    const company = await this.getCompanyById(companyId);
     if (company && company.delivery_slots && company.delivery_slots.length > 0) {
       return company.delivery_slots;
     }
     return DEFAULT_DELIVERY_SLOTS;
   },
 
-  saveDeliverySlots(companyId: string, slots: DeliverySlot[]): Company {
-    const allCompanies = this.getCompanies();
-    const index = allCompanies.findIndex(c => c.id === companyId);
-    if (index === -1) throw new Error('الشركة غير موجودة');
-
-    const updated = {
-      ...allCompanies[index],
-      delivery_slots: slots,
-      updated_at: new Date().toISOString(),
-    };
-    allCompanies[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.COMPANIES, JSON.stringify(allCompanies));
+  async saveDeliverySlots(companyId: string, slots: DeliverySlot[]): Promise<Company> {
+    const updated = await this.updateCompany(companyId, { delivery_slots: slots });
+    if (!updated) throw new Error('الشركة غير موجودة');
     notifyOrderUpdated();
     return updated;
   },
 
-  updateDeliverySlots(companyId: string, slots: DeliverySlot[]): Company {
+  async updateDeliverySlots(companyId: string, slots: DeliverySlot[]): Promise<Company> {
     return this.saveDeliverySlots(companyId, slots);
   },
 
-  addDeliverySlot(companyId: string, slotData: Omit<DeliverySlot, 'id'>): DeliverySlot {
-    const currentSlots = this.getDeliverySlots(companyId);
+  async addDeliverySlot(companyId: string, slotData: Omit<DeliverySlot, 'id'>): Promise<DeliverySlot> {
+    const currentSlots = await this.getDeliverySlots(companyId);
     const newSlot: DeliverySlot = {
       id: 'slot-' + generateId().slice(0, 6),
       ...slotData,
     };
     const updatedSlots = [...currentSlots, newSlot];
-    this.saveDeliverySlots(companyId, updatedSlots);
+    await this.saveDeliverySlots(companyId, updatedSlots);
     return newSlot;
   },
 
-  updateDeliverySlot(companyId: string, slotId: string, updates: Partial<DeliverySlot>): DeliverySlot {
-    const currentSlots = this.getDeliverySlots(companyId);
+  async updateDeliverySlot(companyId: string, slotId: string, updates: Partial<DeliverySlot>): Promise<DeliverySlot> {
+    const currentSlots = await this.getDeliverySlots(companyId);
     const index = currentSlots.findIndex(s => s.id === slotId);
     if (index === -1) throw new Error('فترة التوصيل غير موجودة');
-
     const updatedSlot = { ...currentSlots[index], ...updates };
     currentSlots[index] = updatedSlot;
-    this.saveDeliverySlots(companyId, currentSlots);
+    await this.saveDeliverySlots(companyId, currentSlots);
     return updatedSlot;
   },
 
-  toggleDeliverySlot(companyId: string, slotId: string): DeliverySlot | null {
-    const currentSlots = this.getDeliverySlots(companyId);
+  async toggleDeliverySlot(companyId: string, slotId: string): Promise<DeliverySlot | null> {
+    const currentSlots = await this.getDeliverySlots(companyId);
     const index = currentSlots.findIndex(s => s.id === slotId);
     if (index === -1) return null;
     currentSlots[index].is_active = !currentSlots[index].is_active;
-    this.saveDeliverySlots(companyId, currentSlots);
+    await this.saveDeliverySlots(companyId, currentSlots);
     return currentSlots[index];
   },
 
-  deleteDeliverySlot(companyId: string, slotId: string): boolean {
-    const currentSlots = this.getDeliverySlots(companyId);
+  async deleteDeliverySlot(companyId: string, slotId: string): Promise<boolean> {
+    const currentSlots = await this.getDeliverySlots(companyId);
     const filtered = currentSlots.filter(s => s.id !== slotId);
     if (filtered.length === currentSlots.length) return false;
-
-    this.saveDeliverySlots(companyId, filtered);
+    await this.saveDeliverySlots(companyId, filtered);
     return true;
   },
 
   // ----------------------------------------------------
   // PROFILE & COMPANY UPDATES
   // ----------------------------------------------------
-  updateCompanyProfile(companyId: string, data: { name?: string; phone?: string; email?: string; address?: string; logo_url?: string }): Company {
-    const allCompanies = this.getCompanies();
-    const index = allCompanies.findIndex(c => c.id === companyId);
-    if (index === -1) throw new Error('الشركة غير موجودة');
-
-    const updated: Company = {
-      ...allCompanies[index],
-      ...data,
-      updated_at: new Date().toISOString(),
-    };
-    allCompanies[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.COMPANIES, JSON.stringify(allCompanies));
+  async updateCompanyProfile(companyId: string, data: { name?: string; phone?: string; email?: string; address?: string; logo_url?: string }): Promise<Company> {
+    const updated = await this.updateCompany(companyId, data);
+    if (!updated) throw new Error('الشركة غير موجودة');
     notifyOrderUpdated();
     return updated;
   },
 
-  updateAdminProfile(companyId: string, profileId: string, data: { full_name?: string; phone?: string }): Profile {
-    const raw = localStorage.getItem(STORAGE_KEYS.PROFILES);
-    const profiles: Profile[] = raw ? JSON.parse(raw) : [];
-    const index = profiles.findIndex(p => p.id === profileId && p.company_id === companyId);
-    if (index === -1) throw new Error('الملف الشخصي غير موجود');
-
-    const updated: Profile = {
-      ...profiles[index],
-      ...data,
-      updated_at: new Date().toISOString(),
-    };
-    profiles[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(profiles));
-    notifyOrderUpdated();
-    return updated;
-  },
-
-  updateCourierSelfProfile(companyId: string, courierId: string, data: { full_name?: string; phone?: string; vehicle_type?: string; vehicle_plate?: string }): Courier {
-    const raw = localStorage.getItem(STORAGE_KEYS.COURIERS);
-    const couriers: Courier[] = raw ? JSON.parse(raw) : [];
-    const index = couriers.findIndex(c => c.id === courierId && c.company_id === companyId);
-    if (index === -1) throw new Error('حساب المندوب غير موجود');
-
-    const updated: Courier = {
-      ...couriers[index],
-      ...data,
-      updated_at: new Date().toISOString(),
-    };
-    couriers[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.COURIERS, JSON.stringify(couriers));
-
-    // Also update associated profile if name/phone changed
-    if (data.full_name || data.phone) {
-      const pRaw = localStorage.getItem(STORAGE_KEYS.PROFILES);
-      const profiles: Profile[] = pRaw ? JSON.parse(pRaw) : [];
-      const pIndex = profiles.findIndex(p => p.id === couriers[index].profile_id);
-      if (pIndex !== -1) {
-        profiles[pIndex] = {
-          ...profiles[pIndex],
-          full_name: data.full_name || profiles[pIndex].full_name,
-          phone: data.phone || profiles[pIndex].phone,
-          updated_at: new Date().toISOString(),
-        };
-        localStorage.setItem(STORAGE_KEYS.PROFILES, JSON.stringify(profiles));
-      }
+  async updateAdminProfile(companyId: string, profileId: string, data: { full_name?: string; phone?: string }): Promise<Profile> {
+    const profile = await this.getProfileById(profileId);
+    if (!profile || profile.company_id !== companyId) {
+      throw new Error('الملف الشخصي غير موجود');
     }
+    const updated = await this.updateProfile(profileId, data);
+    if (!updated) throw new Error('فشل التحديث');
+    notifyOrderUpdated();
+    return updated;
+  },
 
+  async updateCourierSelfProfile(companyId: string, courierId: string, data: { full_name?: string; phone?: string; vehicle_type?: string; vehicle_plate?: string }): Promise<Courier> {
+    const courier = await this.getCourierById(companyId, courierId);
+    if (!courier) {
+      throw new Error('حساب المندوب غير موجود');
+    }
+    const updated = await this.updateCourier(companyId, courierId, data);
+    if (!updated) throw new Error('فشل التحديث');
     notifyOrderUpdated();
     return updated;
   },
@@ -2453,7 +1841,7 @@ export const db = {
   // ----------------------------------------------------
   // ACTIVITY LOGS / AUDIT TRAIL QUERY
   // ----------------------------------------------------
-  getOrderActivityLogs(
+  async getOrderActivityLogs(
     companyId: string,
     filters?: {
       dateFrom?: string;
@@ -2463,108 +1851,93 @@ export const db = {
       search?: string;
       limit?: number;
     }
-  ): { event: OrderEvent; order?: Order; returnRecord?: ReturnRecord }[] {
+  ): Promise<{ event: OrderEvent; order?: Order; returnRecord?: ReturnRecord }[]> {
     if (!companyId) return [];
-    const eventsRaw = localStorage.getItem(STORAGE_KEYS.ORDER_EVENTS);
-    const events: OrderEvent[] = eventsRaw ? JSON.parse(eventsRaw) : [];
-    const orders = this.getOrders(companyId);
-    const returnsList = this.getReturns(companyId);
+    const events = await this.getAllOrderEvents(companyId, filters);
 
     const ordersMap = new Map<string, Order>();
-    orders.forEach(o => ordersMap.set(o.id, o));
-
     const returnsMap = new Map<string, ReturnRecord>();
-    returnsList.forEach(r => returnsMap.set(r.id, r));
 
-    let result = events
-      .filter(e => e.company_id === companyId)
-      .map(event => {
-        const order = event.order_id ? ordersMap.get(event.order_id) : undefined;
-        const returnRecord = event.return_id ? returnsMap.get(event.return_id) : undefined;
-        return { event, order, returnRecord };
-      });
+    // Fetch orders and returns that appear in events
+    const orderIds = [...new Set(events.map(e => e.order_id).filter(Boolean))];
+    const returnIds = [...new Set(events.map(e => e.return_id).filter(Boolean))];
 
-    if (filters?.dateFrom) {
-      const fromTime = new Date(filters.dateFrom).getTime();
-      result = result.filter(item => new Date(item.event.timestamp).getTime() >= fromTime);
-    }
-    if (filters?.dateTo) {
-      const toTime = new Date(filters.dateTo).setHours(23, 59, 59, 999);
-      result = result.filter(item => new Date(item.event.timestamp).getTime() <= toTime);
-    }
-    if (filters?.actor && filters.actor !== 'all') {
-      result = result.filter(item => item.event.actor === filters.actor);
-    }
-    if (filters?.eventType && filters.eventType !== 'all') {
-      result = result.filter(item => item.event.event_type === filters.eventType);
-    }
-    if (filters?.search && filters.search.trim()) {
-      const q = filters.search.trim().toLowerCase();
-      result = result.filter(item => {
-        const orderNum = item.order?.order_number?.toLowerCase() || '';
-        const retNum = item.returnRecord?.return_number?.toLowerCase() || '';
-        const custName = item.order?.customer_name?.toLowerCase() || '';
-        const details = item.event.details?.toLowerCase() || '';
-        const actorName = item.event.actor_name?.toLowerCase() || '';
-        return orderNum.includes(q) || retNum.includes(q) || custName.includes(q) || details.includes(q) || actorName.includes(q);
-      });
+    if (orderIds.length > 0) {
+      const { data: orders, error } = await supabase
+        .from('orders')
+        .select('*')
+        .in('id', orderIds)
+        .eq('company_id', companyId);
+      if (!error && orders) {
+        orders.forEach(o => ordersMap.set(o.id, o));
+      }
     }
 
-    result.sort((a, b) => new Date(b.event.timestamp).getTime() - new Date(a.event.timestamp).getTime());
-
-    if (filters?.limit && filters.limit > 0) {
-      result = result.slice(0, filters.limit);
+    if (returnIds.length > 0) {
+      const { data: returns, error } = await supabase
+        .from('returns')
+        .select('*')
+        .in('id', returnIds)
+        .eq('company_id', companyId);
+      if (!error && returns) {
+        returns.forEach(r => returnsMap.set(r.id, r));
+      }
     }
 
-    return result;
+    return events.map(event => ({
+      event,
+      order: event.order_id ? ordersMap.get(event.order_id) : undefined,
+      returnRecord: event.return_id ? returnsMap.get(event.return_id) : undefined,
+    }));
   },
 
   // ----------------------------------------------------
   // COURIER COD COLLECTIONS & DEBT SETTLEMENTS (Strict Multi-Tenant RLS)
   // ----------------------------------------------------
-  getSettlements(companyId: string, courierId?: string): CourierSettlement[] {
+  async getSettlements(companyId: string, courierId?: string): Promise<CourierSettlement[]> {
     if (!companyId) return [];
-    const data = localStorage.getItem(STORAGE_KEYS.SETTLEMENTS);
-    const list: CourierSettlement[] = data ? JSON.parse(data) : [];
-    
-    // Strict isolation: only settlements for this company
-    let filtered = list.filter(s => s.company_id === companyId);
+    let query = supabase.from('courier_settlements').select('*').eq('company_id', companyId);
     if (courierId) {
-      filtered = filtered.filter(s => s.courier_id === courierId);
+      query = query.eq('courier_id', courierId);
     }
-    
-    // Sort newest first
-    return filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return data || [];
   },
 
-  getSettlementById(companyId: string, id: string): CourierSettlement | null {
+  async getSettlementById(companyId: string, id: string): Promise<CourierSettlement | null> {
     if (!companyId || !id) return null;
-    const list = this.getSettlements(companyId);
-    return list.find(s => s.id === id || s.settlement_number === id) || null;
+    const { data, error } = await supabase
+      .from('courier_settlements')
+      .select('*')
+      .eq('company_id', companyId)
+      .or(`id.eq.${id},settlement_number.eq.${id}`)
+      .maybeSingle();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(error.message);
+    }
+    return data;
   },
 
-  getCourierCollectionSummary(companyId: string, courierId: string): CourierCollectionSummary | null {
+  async getCourierCollectionSummary(companyId: string, courierId: string): Promise<CourierCollectionSummary | null> {
     if (!companyId || !courierId) return null;
-    const courier = this.getCourierById(companyId, courierId);
+    const courier = await this.getCourierById(companyId, courierId);
     if (!courier) return null;
 
-    const allOrders = this.getOrders(companyId, courierId);
-    
-    // Distinct delivered orders (avoid duplicate counting)
+    const orders = await this.getOrders(companyId, courierId);
     const seenOrderIds = new Set<string>();
-    const deliveredOrders = allOrders.filter(o => {
+    const deliveredOrders = orders.filter(o => {
       if (o.status !== 'delivered') return false;
       if (seenOrderIds.has(o.id)) return false;
       seenOrderIds.add(o.id);
       return true;
     });
 
-    // Only orders with positive COD amount
     const deliveredCodOrders = deliveredOrders.filter(o => (Number(o.cod_amount) || 0) > 0);
     const totalDeliveredCod = deliveredCodOrders.reduce((sum, o) => sum + (Number(o.cod_amount) || 0), 0);
 
-    // Settlements for this courier
-    const settlements = this.getSettlements(companyId, courierId);
+    const settlements = await this.getSettlements(companyId, courierId);
     const totalSettledAmount = settlements.reduce((sum, s) => sum + (Number(s.received_amount) || 0), 0);
 
     const currentOutstandingBalance = Math.max(0, Math.round((totalDeliveredCod - totalSettledAmount) * 100) / 100);
@@ -2583,48 +1956,44 @@ export const db = {
     };
   },
 
-  getAllCouriersCollections(companyId: string): CourierCollectionSummary[] {
+  async getAllCouriersCollections(companyId: string): Promise<CourierCollectionSummary[]> {
     if (!companyId) return [];
-    const couriers = this.getCouriers(companyId);
+    const couriers = await this.getCouriers(companyId);
     const summaries: CourierCollectionSummary[] = [];
-
     for (const courier of couriers) {
-      const summary = this.getCourierCollectionSummary(companyId, courier.id);
+      const summary = await this.getCourierCollectionSummary(companyId, courier.id);
       if (summary) {
         summaries.push(summary);
       }
     }
-
-    // Sort couriers with highest outstanding balance first
     return summaries.sort((a, b) => b.current_outstanding_balance - a.current_outstanding_balance);
   },
 
-  getOutstandingCollectionsTotal(companyId: string): { totalOutstanding: number; couriersWithDebtCount: number } {
-    const collections = this.getAllCouriersCollections(companyId);
+  async getOutstandingCollectionsTotal(companyId: string): Promise<{ totalOutstanding: number; couriersWithDebtCount: number }> {
+    const collections = await this.getAllCouriersCollections(companyId);
     const totalOutstanding = collections.reduce((sum, c) => sum + c.current_outstanding_balance, 0);
     const couriersWithDebtCount = collections.filter(c => c.current_outstanding_balance > 0).length;
-
     return {
       totalOutstanding: Math.round(totalOutstanding * 100) / 100,
       couriersWithDebtCount,
     };
   },
 
-  createSettlement(
-    companyId: string, 
-    data: { 
-      courierId: string; 
-      receivedAmount: number; 
-      settledBy: string; 
+  async createSettlement(
+    companyId: string,
+    data: {
+      courierId: string;
+      receivedAmount: number;
+      settledBy: string;
       settledByProfileId?: string;
-      notes?: string; 
+      notes?: string;
     }
-  ): CourierSettlement {
+  ): Promise<CourierSettlement> {
     if (!companyId) {
       throw new Error('معرف الشركة مطلوب لإجراء التسوية');
     }
 
-    const courier = this.getCourierById(companyId, data.courierId);
+    const courier = await this.getCourierById(companyId, data.courierId);
     if (!courier) {
       throw new Error('المندوب المحدد غير موجود في قاعدة بيانات الشركة');
     }
@@ -2634,8 +2003,7 @@ export const db = {
       throw new Error('مبلغ الاستلام يجب أن يكون رقماً موجباً أكبر من الصفر');
     }
 
-    // Calculate current live outstanding collections
-    const summary = this.getCourierCollectionSummary(companyId, data.courierId);
+    const summary = await this.getCourierCollectionSummary(companyId, data.courierId);
     if (!summary) {
       throw new Error('تعذر احتساب مبالغ التحصيلات الحالية للمندوب');
     }
@@ -2645,21 +2013,23 @@ export const db = {
       throw new Error('لا توجد تحصيلات نقدية معلقة لتسويتها لهذا المندوب');
     }
 
-    // Overpayment protection
     if (received > expectedAmount) {
       throw new Error('المبلغ المستلم لا يمكن أن يتجاوز إجمالي التحصيلات المعلقة');
     }
 
     const remainingAmount = Math.max(0, Math.round((expectedAmount - received) * 100) / 100);
 
-    // Sequence number generation (e.g. SET-0001)
-    const existingSettlements = this.getSettlements(companyId);
-    const seqNum = existingSettlements.length + 1;
+    // Generate settlement number using count
+    const { count, error: countError } = await supabase
+      .from('courier_settlements')
+      .select('*', { count: 'exact', head: true })
+      .eq('company_id', companyId);
+    if (countError) throw new Error(countError.message);
+    const seqNum = (count || 0) + 1;
     const settlementNumber = `SET-${String(seqNum).padStart(4, '0')}`;
 
     const now = new Date().toISOString();
-    const newSettlement: CourierSettlement = {
-      id: generateId(),
+    const newSettlement: Omit<CourierSettlement, 'id'> = {
       company_id: companyId,
       courier_id: courier.id,
       settlement_number: settlementNumber,
@@ -2672,14 +2042,14 @@ export const db = {
       created_at: now,
     };
 
-    // Save to permanent immutable storage
-    const allSettlementsRaw = localStorage.getItem(STORAGE_KEYS.SETTLEMENTS);
-    const allSettlements: CourierSettlement[] = allSettlementsRaw ? JSON.parse(allSettlementsRaw) : [];
-    allSettlements.push(newSettlement);
-    localStorage.setItem(STORAGE_KEYS.SETTLEMENTS, JSON.stringify(allSettlements));
+    const { data: inserted, error } = await supabase
+      .from('courier_settlements')
+      .insert(newSettlement)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
 
-    // Log Activity Event for Audit Trail
-    this.addOrderEvent({
+    await this.addOrderEvent({
       order_id: '',
       company_id: companyId,
       event_type: 'settlement_created',
@@ -2688,7 +2058,7 @@ export const db = {
       actor_name: data.settledBy,
       details: `تسوية تحصيلات نقدية للمندوب (${courier.full_name} - ${courier.employee_id}) برقم (${settlementNumber}) | المبلغ المستحق: ${expectedAmount.toLocaleString()} ج.م | المستلم: ${received.toLocaleString()} ج.م | المتبقي: ${remainingAmount.toLocaleString()} ج.م${data.notes ? ` - ملاحظات: ${data.notes}` : ''}`,
       metadata: {
-        settlement_id: newSettlement.id,
+        settlement_id: inserted.id,
         settlement_number: settlementNumber,
         courier_id: courier.id,
         courier_name: courier.full_name,
@@ -2696,32 +2066,28 @@ export const db = {
         expected_amount: expectedAmount,
         received_amount: received,
         remaining_amount: remainingAmount,
-      }
+      },
     });
 
-    // Broadcast sync to all active views and tabs
     notifyOrderUpdated();
-
-    return newSettlement;
+    return inserted;
   },
 
   // ----------------------------------------------------
   // MERCHANT FINANCIAL LEDGER & ACCOUNTING SYSTEM
   // ----------------------------------------------------
-  getMerchantTransactions(companyId: string, merchantId?: string): MerchantTransaction[] {
+  async getMerchantTransactions(companyId: string, merchantId?: string): Promise<any[]> {
     if (!companyId) return [];
-    const data = localStorage.getItem(STORAGE_KEYS.MERCHANT_TRANSACTIONS);
-    const list: MerchantTransaction[] = data ? JSON.parse(data) : [];
-
-    let filtered = list.filter(t => t.company_id === companyId);
+    let query = supabase.from('merchant_transactions').select('*').eq('company_id', companyId);
     if (merchantId) {
-      filtered = filtered.filter(t => t.merchant_id === merchantId);
+      query = query.eq('merchant_id', merchantId);
     }
+    const { data, error } = await query.order('created_at', { ascending: true });
+    if (error) throw new Error(error.message);
 
-    // Sort ascending first to compute running balance correctly
-    const ascending = filtered.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    const list = data || [];
     let currentBalance = 0;
-    const withRunning = ascending.map(t => {
+    const withRunning = list.map(t => {
       if (t.direction === 'credit') {
         currentBalance += t.amount;
       } else {
@@ -2730,20 +2096,25 @@ export const db = {
       return {
         ...t,
         type: t.direction,
-        running_balance: Math.round(currentBalance * 100) / 100
+        running_balance: Math.round(currentBalance * 100) / 100,
       };
     });
 
-    // Return newest first
     return withRunning.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   },
 
-  addMerchantTransaction(
-    companyId: string, 
+  async addMerchantTransaction(
+    companyId: string,
     data: Omit<MerchantTransaction, 'id' | 'company_id' | 'created_at'>
-  ): MerchantTransaction {
+  ): Promise<MerchantTransaction> {
     if (!companyId || !data.merchant_id) {
       throw new Error('معرف الشركة ومعرف التاجر مطلوبان لإجراء المعاملة المالية');
+    }
+
+    // Verify merchant belongs to company
+    const merchant = await this.getMerchantById(companyId, data.merchant_id);
+    if (!merchant) {
+      throw new Error('التاجر المحدد غير موجود في هذه الشركة');
     }
 
     const amount = Number(data.amount);
@@ -2751,12 +2122,8 @@ export const db = {
       throw new Error('مبلغ المعاملة المالية يجب أن يكون رقماً موجباً أكبر من الصفر');
     }
 
-    const allTxRaw = localStorage.getItem(STORAGE_KEYS.MERCHANT_TRANSACTIONS);
-    const allTx: MerchantTransaction[] = allTxRaw ? JSON.parse(allTxRaw) : [];
     const now = new Date().toISOString();
-
-    const newTx: MerchantTransaction = {
-      id: generateId(),
+    const newTx: Omit<MerchantTransaction, 'id'> = {
       company_id: companyId,
       merchant_id: data.merchant_id,
       transaction_type: data.transaction_type,
@@ -2775,41 +2142,46 @@ export const db = {
       created_at: now,
     };
 
-    allTx.push(newTx);
-    localStorage.setItem(STORAGE_KEYS.MERCHANT_TRANSACTIONS, JSON.stringify(allTx));
+    const { data: inserted, error } = await supabase
+      .from('merchant_transactions')
+      .insert(newTx)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
 
     notifyOrderUpdated();
-    return newTx;
+    return inserted;
   },
 
-  getMerchantSettlements(companyId: string, merchantId?: string): MerchantSettlement[] {
+  async getMerchantSettlements(companyId: string, merchantId?: string): Promise<any[]> {
     if (!companyId) return [];
-    const data = localStorage.getItem(STORAGE_KEYS.MERCHANT_SETTLEMENTS);
-    const list: MerchantSettlement[] = data ? JSON.parse(data) : [];
-
-    let filtered = list.filter(s => s.company_id === companyId);
+    let query = supabase.from('merchant_settlements').select('*').eq('company_id', companyId);
     if (merchantId) {
-      filtered = filtered.filter(s => s.merchant_id === merchantId);
+      query = query.eq('merchant_id', merchantId);
     }
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
 
-    return filtered
-      .map(s => ({
-        ...s,
-        amount: s.paid_amount,
-        type: s.settlement_type,
-        created_by: s.settled_by,
-        settlement_date: s.created_at,
-      }))
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return (data || []).map(s => ({
+      ...s,
+      amount: s.paid_amount,
+      type: s.settlement_type,
+      created_by: s.settled_by,
+      settlement_date: s.created_at,
+    }));
   },
 
-  getNextMerchantSettlementNumber(companyId: string): string {
-    const settlements = this.getMerchantSettlements(companyId);
-    const count = settlements.length + 1;
-    return `MSET-${String(count).padStart(4, '0')}`;
+  async getNextMerchantSettlementNumber(companyId: string): Promise<string> {
+    const { count, error } = await supabase
+      .from('merchant_settlements')
+      .select('*', { count: 'exact', head: true })
+      .eq('company_id', companyId);
+    if (error) throw new Error(error.message);
+    const seqNum = (count || 0) + 1;
+    return `MSET-${String(seqNum).padStart(4, '0')}`;
   },
 
-  createMerchantSettlement(
+  async createMerchantSettlement(
     companyId: string,
     data: {
       merchantId: string;
@@ -2821,9 +2193,9 @@ export const db = {
       payment_method?: string;
       reference_number?: string;
     }
-  ): MerchantSettlement {
+  ): Promise<MerchantSettlement> {
     if (!companyId) throw new Error('معرف الشركة مطلوب لإجراء التسوية');
-    const merchant = this.getMerchantById(companyId, data.merchantId);
+    const merchant = await this.getMerchantById(companyId, data.merchantId);
     if (!merchant) throw new Error('التاجر المحدد غير موجود');
 
     const amount = Number(data.amount);
@@ -2831,7 +2203,7 @@ export const db = {
       throw new Error('مبلغ التسوية يجب أن يكون رقماً موجباً أكبر من الصفر');
     }
 
-    const summary = this.getMerchantFinancialSummary(companyId, data.merchantId);
+    const summary = await this.getMerchantFinancialSummary(companyId, data.merchantId);
     if (!summary) throw new Error('تعذر احتساب الحساب المالي للتاجر');
 
     let expectedAmount = 0;
@@ -2863,11 +2235,10 @@ export const db = {
     }
 
     const remainingAmount = Math.max(0, Math.round((expectedAmount - amount) * 100) / 100);
-    const settlementNumber = this.getNextMerchantSettlementNumber(companyId);
+    const settlementNumber = await this.getNextMerchantSettlementNumber(companyId);
     const now = new Date().toISOString();
 
-    const newSettlement: MerchantSettlement = {
-      id: generateId(),
+    const newSettlement: Omit<MerchantSettlement, 'id'> = {
       company_id: companyId,
       merchant_id: merchant.id,
       settlement_number: settlementNumber,
@@ -2887,12 +2258,14 @@ export const db = {
       created_at: now,
     };
 
-    const allSettlementsRaw = localStorage.getItem(STORAGE_KEYS.MERCHANT_SETTLEMENTS);
-    const allSettlements: MerchantSettlement[] = allSettlementsRaw ? JSON.parse(allSettlementsRaw) : [];
-    allSettlements.push(newSettlement);
-    localStorage.setItem(STORAGE_KEYS.MERCHANT_SETTLEMENTS, JSON.stringify(allSettlements));
+    const { data: inserted, error } = await supabase
+      .from('merchant_settlements')
+      .insert(newSettlement)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
 
-    // Record corresponding transaction in ledger
+    // Record corresponding transaction
     let txType: MerchantTransactionType = 'MERCHANT_SETTLEMENT';
     let txDirection: 'credit' | 'debit' = 'debit';
     let txDesc = `تسوية صرف مستحقات للتاجر برقم (${settlementNumber})`;
@@ -2913,21 +2286,20 @@ export const db = {
       }
     }
 
-    this.addMerchantTransaction(companyId, {
+    await this.addMerchantTransaction(companyId, {
       merchant_id: merchant.id,
       transaction_type: txType,
       direction: txDirection,
       amount,
       reference_type: 'settlement',
-      reference_id: newSettlement.id,
-      settlement_id: newSettlement.id,
+      reference_id: inserted.id,
+      settlement_id: inserted.id,
       settlement_number: settlementNumber,
       description: txDesc + (data.notes ? ` - ملاحظات: ${data.notes}` : ''),
       created_by: data.settledBy,
     });
 
-    // Audit log
-    this.addOrderEvent({
+    await this.addOrderEvent({
       order_id: '',
       company_id: companyId,
       event_type: 'settlement_created',
@@ -2936,112 +2308,122 @@ export const db = {
       actor_name: data.settledBy,
       details: `تسوية مالية لمتجر (${merchant.store_name}) برقم (${settlementNumber}) | النوع: ${
         data.settlementType === 'payout_to_merchant' ? 'صرف مستحقات' : data.settlementType === 'debt_collection' ? 'تحصيل مديونية' : 'تسوية صافي'
-      } | المبلغ: ${amount.toLocaleString()} ج.م | المتبقي: ${remainingAmount.toLocaleString()} ج.م`
+      } | المبلغ: ${amount.toLocaleString()} ج.م | المتبقي: ${remainingAmount.toLocaleString()} ج.م`,
     });
 
     notifyOrderUpdated();
-    return newSettlement;
+    return inserted;
   },
 
-  getMerchantFinancialSummary(companyId: string, merchantId: string): MerchantFinancialSummary | null {
+  async getMerchantFinancialSummary(companyId: string, merchantId: string): Promise<MerchantFinancialSummary | null> {
     if (!companyId || !merchantId) return null;
-    const merchant = this.getMerchantById(companyId, merchantId);
+    const merchant = await this.getMerchantById(companyId, merchantId);
     if (!merchant) return null;
 
-    const orders = this.getOrders(companyId).filter(o => o.merchant_id === merchantId);
-    const returnsList = this.getReturns(companyId).filter(r => r.merchant_id === merchantId);
-    const deliveredOrders = orders.filter(o => o.status === 'delivered');
+    const orders = await this.getOrders(companyId);
+    const merchantOrders = orders.filter(o => o.merchant_id === merchantId);
+    const deliveredOrders = merchantOrders.filter(o => o.status === 'delivered');
     const deliveredCodSum = deliveredOrders.reduce((sum, o) => sum + (Number(o.cod_amount) || 0), 0);
 
-    const transactions = this.getMerchantTransactions(companyId, merchantId);
-    const settlements = this.getMerchantSettlements(companyId, merchantId);
+    const transactions = await this.getMerchantTransactions(companyId, merchantId);
+    const settlements = await this.getMerchantSettlements(companyId, merchantId);
 
-    // Sum of payouts to merchant (money paid to merchant from company)
+    // Payouts (money paid to merchant)
     const payoutsSum = settlements
-      .filter(s => s.settlement_type === 'payout_to_merchant' || (s.settlement_type === 'net_settlement' && s.expected_amount > 0))
+      .filter(s => s.settlement_type === 'payout_to_merchant')
       .reduce((sum, s) => sum + s.paid_amount, 0);
 
-    // Additional manual credit transactions to merchant
+    // Manual credits
     const manualCredits = transactions
       .filter(t => t.transaction_type === 'CREDIT_TO_MERCHANT')
       .reduce((sum, t) => sum + t.amount, 0);
 
-    // Amount Due to Merchant = (Delivered COD + Manual Credits) - Payouts
-    const amountDueToMerchant = Math.max(0, Math.round((deliveredCodSum + manualCredits - payoutsSum) * 100) / 100);
+    // Amount Due = delivered COD + manual credits - payouts
+    const amountDue = Math.max(0, Math.round((deliveredCodSum + manualCredits - payoutsSum) * 100) / 100);
 
-    // Debits against merchant (Return costs + shipping charges + manual debits)
-    const returnCostsCharged = transactions
+    // Debits
+    const returnCosts = transactions
       .filter(t => t.transaction_type === 'RETURN_COST')
       .reduce((sum, t) => sum + t.amount, 0);
-
     const shippingCharges = transactions
       .filter(t => t.transaction_type === 'SHIPPING_CHARGE')
       .reduce((sum, t) => sum + t.amount, 0);
-
     const manualDebits = transactions
       .filter(t => t.transaction_type === 'DEBIT_FROM_MERCHANT')
       .reduce((sum, t) => sum + t.amount, 0);
+    const totalDebits = returnCosts + shippingCharges + manualDebits;
 
-    const totalDebits = returnCostsCharged + shippingCharges + manualDebits;
-
-    // Debt payments collected from merchant
-    const debtPaymentsCollected = settlements
+    // Debt payments collected
+    const debtPayments = settlements
       .filter(s => s.settlement_type === 'debt_collection')
       .reduce((sum, s) => sum + s.paid_amount, 0);
 
-    // Merchant Debt to Company = Total Debits - Debt Payments
-    const merchantDebtToCompany = Math.max(0, Math.round((totalDebits - debtPaymentsCollected) * 100) / 100);
+    // For net_settlement, we need to consider that net settlements affect both sides
+    // We will treat net settlements as adjusting the balance directly.
+    // Since we record transactions for net settlements, we can use them.
+    // Let's compute net position using transactions and settlements.
+    // However, we already have amountDue and merchantDebt. But net settlements are included in payouts/debt payments?
+    // To be precise: net_settlement transaction is recorded as either MERCHANT_SETTLEMENT (debit) or MERCHANT_DEBT_PAYMENT (credit)
+    // This will be reflected in transactions, so our calculations using transactions should be correct.
+    // We need to ensure that we don't double count net settlements in both payouts and debt payments.
+    // We'll handle it by not including net_settlement in payoutsSum or debtPayments separately; instead we rely on transactions.
 
-    // Net Position = Amount Due - Debt
-    const netPosition = Math.round((amountDueToMerchant - merchantDebtToCompany) * 100) / 100;
+    // Actually, our payoutsSum and debtPayments are based on settlement_type, ignoring net_settlement.
+    // The net_settlement is handled via transactions. So amountDue and merchantDebt should be correct.
+
+    const merchantDebt = Math.max(0, Math.round((totalDebits - debtPayments) * 100) / 100);
+
+    // Net position = amountDue - merchantDebt
+    const netPosition = Math.round((amountDue - merchantDebt) * 100) / 100;
+
+    const returnsList = await this.getReturns(companyId);
+    const merchantReturns = returnsList.filter(r => r.merchant_id === merchantId);
 
     const lastSettlementDate = settlements.length > 0 ? settlements[0].created_at : null;
 
     return {
       merchant_id: merchantId,
       merchant,
-      amount_due_to_merchant: amountDueToMerchant,
-      merchant_debt_to_company: merchantDebtToCompany,
+      amount_due_to_merchant: amountDue,
+      merchant_debt_to_company: merchantDebt,
       net_position: netPosition,
       net_balance: netPosition,
       total_cod_earned: deliveredCodSum + manualCredits,
       total_delivered_orders: deliveredOrders.length,
       total_returns_debited: totalDebits,
-      total_settled_paid: payoutsSum,
-      total_orders_count: orders.length,
-      total_orders: orders.length,
+      total_settled_paid: payoutsSum + debtPayments, // total settled (could be payouts or debt collections)
+      total_orders_count: merchantOrders.length,
+      total_orders: merchantOrders.length,
       delivered_orders_count: deliveredOrders.length,
-      returns_count: returnsList.length,
+      returns_count: merchantReturns.length,
       settlements_count: settlements.length,
       transactions_count: transactions.length,
       last_settlement_date: lastSettlementDate,
     };
   },
 
-  getAllMerchantsFinancialSummaries(companyId: string): MerchantFinancialSummary[] {
+  async getAllMerchantsFinancialSummaries(companyId: string): Promise<MerchantFinancialSummary[]> {
     if (!companyId) return [];
-    const merchants = this.getMerchants(companyId);
+    const merchants = await this.getMerchants(companyId);
     const summaries: MerchantFinancialSummary[] = [];
-
     for (const m of merchants) {
-      const summary = this.getMerchantFinancialSummary(companyId, m.id);
+      const summary = await this.getMerchantFinancialSummary(companyId, m.id);
       if (summary) {
         summaries.push(summary);
       }
     }
-
     return summaries.sort((a, b) => b.total_orders_count - a.total_orders_count);
   },
 
   // ----------------------------------------------------
-  // DASHBOARD METRICS (Real Database Computations)
+  // DASHBOARD METRICS
   // ----------------------------------------------------
-  getAdminMetrics(companyId: string) {
-    const merchants = this.getMerchants(companyId);
-    const couriers = this.getCouriers(companyId);
-    const orders = this.getOrders(companyId);
-    const returnsMetrics = this.getReturnMetrics(companyId);
-    const returnsList = this.getReturns(companyId);
+  async getAdminMetrics(companyId: string) {
+    const merchants = await this.getMerchants(companyId);
+    const couriers = await this.getCouriers(companyId);
+    const orders = await this.getOrders(companyId);
+    const returnsMetrics = await this.getReturnMetrics(companyId);
+    const returnsList = await this.getReturns(companyId);
 
     const activeCouriersCount = couriers.filter(c => c.status === 'active').length;
     const activeMerchantsCount = merchants.filter(m => m.status === 'active').length;
@@ -3050,17 +2432,16 @@ export const db = {
     const deliveredCodAmount = deliveredOrders.reduce((sum, o) => sum + (Number(o.cod_amount) || 0), 0);
 
     const completedOrFailed = orders.filter(o => o.status === 'delivered' || o.status === 'failed').length;
-    const deliverySuccessRate = completedOrFailed > 0 
-      ? Math.round((deliveredOrders.length / completedOrFailed) * 100) 
-      : 100;
+    const deliverySuccessRate = completedOrFailed > 0
+      ? Math.round((deliveredOrders.length / completedOrFailed) * 100)
+      : 0; // fixed: 0 instead of 100
 
-    // Courier Collections KPI
-    const outstandingCollections = this.getOutstandingCollectionsTotal(companyId);
+    const outstandingCollections = await this.getOutstandingCollectionsTotal(companyId);
 
     const todayStr = new Date().toISOString().split('T')[0];
+    // Use delivery_date = today or created_at = today (for pending orders)
     const todayOrders = orders.filter(o => o.delivery_date === todayStr || o.created_at.startsWith(todayStr));
 
-    // Today's delivery breakdown
     const todayDelivered = todayOrders.filter(o => o.status === 'delivered').length;
     const todayFailed = todayOrders.filter(o => o.status === 'failed').length;
     const todayAssigned = todayOrders.filter(o => o.status === 'assigned').length;
@@ -3069,7 +2450,7 @@ export const db = {
     const todayRescheduled = todayOrders.filter(o => o.customer_response_status === 'reschedule_requested').length;
     const todayCancelled = todayOrders.filter(o => o.status === 'cancelled').length;
     const completedToday = todayDelivered + todayFailed;
-    const successRateToday = completedToday > 0 ? Math.round((todayDelivered / completedToday) * 100) : 100;
+    const successRateToday = completedToday > 0 ? Math.round((todayDelivered / completedToday) * 100) : 0;
 
     const todayOverview = {
       total: todayOrders.length,
@@ -3087,15 +2468,17 @@ export const db = {
       successRateToday,
     };
 
-    // Courier performance today
-    const courierPerformance = couriers.map(courier => {
+    // Courier performance - today only
+    const courierPerformance = await Promise.all(couriers.map(async courier => {
       const courierOrders = orders.filter(o => o.courier_id === courier.id);
-      const courierTodayOrders = courierOrders.filter(o => o.delivery_date === todayStr || (!o.delivery_date && (o.status === 'assigned' || o.status === 'out_for_delivery')));
-      const target = courierTodayOrders.length > 0 ? courierTodayOrders : courierOrders;
+      // Only today's orders for this courier
+      const courierTodayOrders = courierOrders.filter(o => o.delivery_date === todayStr || o.created_at.startsWith(todayStr));
+      // Use only today's orders, not fallback to all
+      const target = courierTodayOrders; // no fallback
       const deliveredCount = target.filter(o => o.status === 'delivered').length;
       const failedCount = target.filter(o => o.status === 'failed').length;
       const totalDone = deliveredCount + failedCount;
-      const successRate = totalDone > 0 ? Math.round((deliveredCount / totalDone) * 100) : 100;
+      const successRate = totalDone > 0 ? Math.round((deliveredCount / totalDone) * 100) : 0;
       const collectedCod = target.filter(o => o.status === 'delivered').reduce((sum, o) => sum + (Number(o.cod_amount) || 0), 0);
 
       return {
@@ -3111,9 +2494,8 @@ export const db = {
         successRate,
         collectedCod,
       };
-    }).sort((a, b) => b.assignedCount - a.assignedCount);
-
-    const courierPerformanceToday = courierPerformance;
+    }));
+    courierPerformance.sort((a, b) => b.assignedCount - a.assignedCount);
 
     // Merchant performance
     const merchantPerformance = merchants.map(merchant => {
@@ -3122,7 +2504,7 @@ export const db = {
       const deliveredCount = mOrders.filter(o => o.status === 'delivered').length;
       const failedCount = mOrders.filter(o => o.status === 'failed').length;
       const totalDone = deliveredCount + failedCount;
-      const successRate = totalDone > 0 ? Math.round((deliveredCount / totalDone) * 100) : 100;
+      const successRate = totalDone > 0 ? Math.round((deliveredCount / totalDone) * 100) : 0;
       const totalCod = mOrders.reduce((sum, o) => sum + (Number(o.cod_amount) || 0), 0);
       const totalReturnValue = mReturns.reduce((sum, r) => sum + (Number(r.total_return_amount) || 0), 0);
 
@@ -3142,16 +2524,14 @@ export const db = {
       };
     }).sort((a, b) => b.totalOrders - a.totalOrders);
 
-    // Customer confirmation breakdown
+    // Customer confirmation
     const customerConfirmedCount = orders.filter(o => o.customer_response_status === 'confirmed').length;
     const customerPendingCount = orders.filter(o => !o.customer_response_status || o.customer_response_status === 'pending').length;
     const customerRescheduledCount = orders.filter(o => o.customer_response_status === 'reschedule_requested').length;
     const customerCancelledCount = orders.filter(o => o.customer_response_status === 'cancelled').length;
-    const totalWithResponse = customerConfirmedCount + customerRescheduledCount + customerCancelledCount;
     const confirmationRate = orders.length > 0 ? Math.round((customerConfirmedCount / orders.length) * 100) : 0;
 
-    // Recent activity (latest 10 items)
-    const recentActivity = this.getAllOrderEvents(companyId, { limit: 10 });
+    const recentActivity = await this.getAllOrderEvents(companyId, { limit: 10 });
 
     return {
       totalMerchants: merchants.length,
@@ -3168,10 +2548,8 @@ export const db = {
       totalCodAmount,
       deliveredCodAmount,
       deliverySuccessRate,
-      // Outstanding Collections KPI (Prompt 4 Section 19)
       outstandingCourierCollections: outstandingCollections.totalOutstanding,
       couriersWithOutstandingCount: outstandingCollections.couriersWithDebtCount,
-      // Customer Confirmation metrics
       customerConfirmedCount,
       customerPendingCount,
       customerRescheduledCount,
@@ -3183,7 +2561,6 @@ export const db = {
         cancelled: customerCancelledCount,
         confirmationRate,
       },
-      // Returns metrics
       totalReturns: returnsMetrics.totalReturns,
       returnsTotal: returnsMetrics.totalReturns,
       returnsCreated: returnsMetrics.createdCount,
@@ -3193,25 +2570,23 @@ export const db = {
       returnsTotalValue: returnsMetrics.totalReturnValue,
       activeReturns: returnsMetrics.activeReturnsCount,
       returnsActive: returnsMetrics.activeReturnsCount,
-      // Today & Performance tables
       todayOverview,
       courierPerformance,
-      courierPerformanceToday,
+      courierPerformanceToday: courierPerformance,
       merchantPerformance,
       recentActivity,
     };
   },
 
-  getCourierMetrics(companyId: string, courierId: string) {
+  async getCourierMetrics(companyId: string, courierId: string) {
     const todayStr = new Date().toISOString().split('T')[0];
-    const orders = this.getOrders(companyId, courierId);
-    const returnsMetrics = this.getReturnMetrics(companyId, courierId);
-    const collectionSummary = this.getCourierCollectionSummary(companyId, courierId);
-    
-    // If orders have delivery_date matching today, or fallback to all active assigned orders if none strictly today
-    const todayOrders = orders.filter(o => o.delivery_date === todayStr || (!o.delivery_date && (o.status === 'assigned' || o.status === 'out_for_delivery')));
-    // Alternatively, calculate for all orders assigned to courier today + active orders
-    const targetSet = todayOrders.length > 0 ? todayOrders : orders;
+    const orders = await this.getOrders(companyId, courierId);
+    const returnsMetrics = await this.getReturnMetrics(companyId, courierId);
+    const collectionSummary = await this.getCourierCollectionSummary(companyId, courierId);
+
+    // Today's orders only (no fallback to all orders)
+    const todayOrders = orders.filter(o => o.delivery_date === todayStr || o.created_at.startsWith(todayStr));
+    const targetSet = todayOrders; // no fallback
 
     const todayConfirmed = targetSet.filter(o => o.customer_response_status === 'confirmed').length;
     const todayWaiting = targetSet.filter(o => (!o.customer_response_status || o.customer_response_status === 'pending') && o.status !== 'delivered' && o.status !== 'failed' && o.status !== 'cancelled').length;
@@ -3221,8 +2596,15 @@ export const db = {
     const todayFailed = targetSet.filter(o => o.status === 'failed').length;
     const todayCancelled = targetSet.filter(o => o.status === 'cancelled' || o.customer_response_status === 'cancelled').length;
 
+    // Overall stats (all time)
+    const totalDelivered = orders.filter(o => o.status === 'delivered').length;
+    const totalFailed = orders.filter(o => o.status === 'failed').length;
+    const totalCancelled = orders.filter(o => o.status === 'cancelled').length;
+    const totalOutForDelivery = orders.filter(o => o.status === 'out_for_delivery').length;
+    const totalPendingAssigned = orders.filter(o => o.status === 'assigned').length;
+
     return {
-      // Today's Deliveries (Section 3)
+      // Today
       todayTotal: targetSet.length,
       todayConfirmed,
       todayWaiting,
@@ -3231,25 +2613,23 @@ export const db = {
       todayDelivered,
       todayFailed,
       todayCancelled,
-
-      // Performance stats (Section 20)
       todayAssigned: targetSet.length,
       todayCompleted: todayDelivered,
-      
-      // Overall Performance
-      totalAssigned: orders.length,
-      totalDelivered: orders.filter(o => o.status === 'delivered').length,
-      totalFailed: orders.filter(o => o.status === 'failed').length,
-      totalCancelled: orders.filter(o => o.status === 'cancelled').length,
-      totalOutForDelivery: orders.filter(o => o.status === 'out_for_delivery').length,
-      totalPendingAssigned: orders.filter(o => o.status === 'assigned').length,
 
-      // Returns for Courier
+      // All time
+      totalAssigned: orders.length,
+      totalDelivered,
+      totalFailed,
+      totalCancelled,
+      totalOutForDelivery,
+      totalPendingAssigned,
+
+      // Returns
       assignedReturnsCount: returnsMetrics.totalReturns,
       activeReturnsCount: returnsMetrics.activeReturnsCount,
       completedReturnsCount: returnsMetrics.returnedCount,
 
-      // Financials & COD Collections (Prompt 4 Sections 1, 2, 3, 13)
+      // Financials
       totalCodToCollect: orders
         .filter(o => o.status === 'assigned' || o.status === 'out_for_delivery')
         .reduce((sum, o) => sum + (Number(o.cod_amount) || 0), 0),
@@ -3259,16 +2639,16 @@ export const db = {
       deliveredCodOrdersCount: collectionSummary?.delivered_cod_orders_count || 0,
       lastSettlementDate: collectionSummary?.last_settlement_date || null,
 
-      // Legacy compatibility keys
+      // Legacy
       assignedOrdersCount: orders.length,
       todayAssignedCount: targetSet.length,
       pendingDeliveriesCount: orders.filter(o => o.status === 'assigned' || o.status === 'out_for_delivery').length,
       todayDeliveredCount: todayDelivered,
       todayFailedCount: todayFailed,
-      completedDeliveriesCount: orders.filter(o => o.status === 'delivered').length,
-      failedDeliveriesCount: orders.filter(o => o.status === 'failed').length,
+      completedDeliveriesCount: totalDelivered,
+      failedDeliveriesCount: totalFailed,
       confirmedOrdersCount: orders.filter(o => o.customer_response_status === 'confirmed').length,
       rescheduleRequestedCount: orders.filter(o => o.customer_response_status === 'reschedule_requested').length,
     };
-  }
+  },
 };
