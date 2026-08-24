@@ -53,12 +53,18 @@ export const ReportsPage: React.FC = () => {
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [couriers, setCouriers] = useState<Courier[]>([]);
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!companyId) return;
-    setAllOrders(db.getOrders(companyId));
-    setAllReturns(db.getReturns(companyId));
-    setMerchants(db.getMerchants(companyId));
-    setCouriers(db.getCouriers(companyId));
+    const [ords, rets, mers, crs] = await Promise.all([
+      db.getOrders(companyId),
+      db.getReturns(companyId),
+      db.getMerchants(companyId),
+      db.getCouriers(companyId),
+    ]);
+    setAllOrders(ords);
+    setAllReturns(rets);
+    setMerchants(mers);
+    setCouriers(crs);
   };
 
   useEffect(() => {

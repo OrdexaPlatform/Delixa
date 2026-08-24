@@ -94,9 +94,9 @@ ${returnRecord.merchant_charge_amount ? `مديونية التاجر: ${returnRe
   };
 
   const getReasonLabel = (reasonKey: string) => {
-    const found = RETURN_REASONS.find(r => r.key === reasonKey);
+    const found = RETURN_REASONS.find(r => r.id === reasonKey);
     if (found) {
-      return isRTL ? found.labelAr : found.labelEn;
+      return isRTL ? found.label : found.enLabel;
     }
     return reasonKey;
   };

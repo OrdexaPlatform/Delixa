@@ -74,8 +74,9 @@ export const SettingsPage: React.FC = () => {
       setAdminName(session.profile.full_name || '');
       setAdminPhone(session.profile.phone || '');
 
-      const currentSlots = db.getDeliverySlots(session.company.id);
-      setSlots(currentSlots);
+      db.getDeliverySlots(session.company.id).then(currentSlots => {
+        setSlots(currentSlots);
+      });
     }
   }, [session]);
 
@@ -106,7 +107,7 @@ export const SettingsPage: React.FC = () => {
   };
 
   // Add Delivery Slot
-  const handleAddSlot = (e: React.FormEvent) => {
+  const handleAddSlot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSlotName.trim()) {
       showToast('error', 'اسم نافذة التوصيل مطلوب');
@@ -118,7 +119,7 @@ export const SettingsPage: React.FC = () => {
     }
 
     try {
-      const created = db.addDeliverySlot(session.company.id, {
+      const created = await db.addDeliverySlot(session.company.id, {
         name: newSlotName.trim(),
         from_time: newFromTime,
         to_time: newToTime,
@@ -136,8 +137,8 @@ export const SettingsPage: React.FC = () => {
   };
 
   // Toggle Slot Active
-  const handleToggleSlot = (slotId: string) => {
-    const updated = db.toggleDeliverySlot(session.company.id, slotId);
+  const handleToggleSlot = async (slotId: string) => {
+    const updated = await db.toggleDeliverySlot(session.company.id, slotId);
     if (updated) {
       setSlots(prev => prev.map(s => s.id === slotId ? updated : s));
       showToast('success', updated.is_active ? 'تم تفعيل النافذة' : 'تم تعطيل النافذة');
@@ -145,25 +146,25 @@ export const SettingsPage: React.FC = () => {
   };
 
   // Delete Slot
-  const handleDeleteSlot = (slotId: string) => {
+  const handleDeleteSlot = async (slotId: string) => {
     if (slots.length <= 1) {
       showToast('error', 'يجب الاحتفاظ بنافذة توصيل واحدة على الأقل');
       return;
     }
-    db.deleteDeliverySlot(session.company.id, slotId);
+    await db.deleteDeliverySlot(session.company.id, slotId);
     setSlots(prev => prev.filter(s => s.id !== slotId));
     showToast('success', 'تم حذف نافذة التوصيل');
   };
 
   // Restore Default Slots
-  const handleResetSlots = () => {
-    db.updateDeliverySlots(session.company.id, DEFAULT_DELIVERY_SLOTS);
+  const handleResetSlots = async () => {
+    await db.updateDeliverySlots(session.company.id, DEFAULT_DELIVERY_SLOTS);
     setSlots(DEFAULT_DELIVERY_SLOTS);
     showToast('success', 'تمت استعادة النوافذ الافتراضية');
   };
 
   // Save Admin Profile & Password
-  const handleSaveAdminProfile = (e: React.FormEvent) => {
+  const handleSaveAdminProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingAdmin(true);
 
@@ -175,7 +176,7 @@ export const SettingsPage: React.FC = () => {
       }
 
       // Update name & phone
-      db.updateProfile(session.profile.id, {
+      await db.updateProfile(session.profile.id, {
         full_name: adminName.trim(),
         phone: adminPhone.trim(),
       });
@@ -192,7 +193,12 @@ export const SettingsPage: React.FC = () => {
           setSavingAdmin(false);
           return;
         }
-        // Password updated simulated
+        
+        const { supabase } = await import('../../lib/supabase');
+        if (supabase) {
+          await supabase.auth.updateUser({ password: newPassword });
+        }
+
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');

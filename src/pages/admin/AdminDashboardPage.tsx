@@ -42,26 +42,26 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
   const { t, isRTL } = useLanguage();
   const ArrowIcon = isRTL ? ArrowLeft : ArrowRight;
 
-  const [metrics, setMetrics] = useState<ReturnType<typeof db.getAdminMetrics> | null>(null);
+  const [metrics, setMetrics] = useState<Awaited<ReturnType<typeof db.getAdminMetrics>> | null>(null);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [couriersList, setCouriersList] = useState<Courier[]>([]);
   const [merchantsList, setMerchantsList] = useState<Merchant[]>([]);
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!session) return;
     const companyId = session.company.id;
 
     // Fetch real metrics from DB
-    const dbMetrics = db.getAdminMetrics(companyId);
+    const [dbMetrics, orders, couriers, merchants] = await Promise.all([
+      db.getAdminMetrics(companyId),
+      db.getOrders(companyId),
+      db.getCouriers(companyId),
+      db.getMerchants(companyId),
+    ]);
+
     setMetrics(dbMetrics);
-
-    const orders = db.getOrders(companyId);
     setRecentOrders(orders.slice(0, 6));
-
-    const couriers = db.getCouriers(companyId);
     setCouriersList(couriers);
-
-    const merchants = db.getMerchants(companyId);
     setMerchantsList(merchants);
   };
 

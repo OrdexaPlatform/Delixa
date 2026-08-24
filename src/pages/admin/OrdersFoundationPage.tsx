@@ -128,13 +128,13 @@ export const OrdersFoundationPage: React.FC = () => {
   // Assign modal fields
   const [selectedCourierIdForAssign, setSelectedCourierIdForAssign] = useState<string>('');
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!session) return;
     const companyId = session.company.id;
-    const ords = db.getOrders(companyId);
-    const mers = db.getMerchants(companyId);
-    const crs = db.getCouriers(companyId);
-    const rets = db.getReturns(companyId);
+    const ords = await db.getOrders(companyId);
+    const mers = await db.getMerchants(companyId);
+    const crs = await db.getCouriers(companyId);
+    const rets = await db.getReturns(companyId);
 
     const rMap: Record<string, ReturnRecord> = {};
     rets.forEach(r => { rMap[r.order_id] = r; });
@@ -149,14 +149,16 @@ export const OrdersFoundationPage: React.FC = () => {
     loadData();
 
     // Subscribe to live order updates
-    const unsubscribe = subscribeOrderUpdates((updatedOrderId) => {
+    const unsubscribe = subscribeOrderUpdates(async (updatedOrderId) => {
       loadData();
       if (currentOrder && (!updatedOrderId || currentOrder.id === updatedOrderId)) {
-        const fresh = db.getOrders(session?.company?.id || '').find(o => o.id === currentOrder.id);
+        const ords = await db.getOrders(session?.company?.id || '');
+        const fresh = ords.find(o => o.id === currentOrder.id);
         if (fresh) {
           setCurrentOrder(fresh);
-          setOrderEvents(db.getOrderEvents(fresh.id));
-          const ret = db.getReturnByOrderId(session?.company?.id || '', fresh.id);
+          const evs = await db.getOrderEvents(fresh.id);
+          setOrderEvents(evs);
+          const ret = await db.getReturnByOrderId(session?.company?.id || '', fresh.id);
           setCurrentOrderReturn(ret || null);
         }
       }
@@ -165,7 +167,7 @@ export const OrdersFoundationPage: React.FC = () => {
     return () => unsubscribe();
   }, [session, currentOrder?.id]);
 
-  const handleSendWhatsApp = (order: Order, e?: React.MouseEvent) => {
+  const handleSendWhatsApp = async (order: Order, e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!session) return;
     const merchant = merchants.find(m => m.id === order.merchant_id);
@@ -178,11 +180,12 @@ export const OrdersFoundationPage: React.FC = () => {
     });
 
     openWhatsAppChat(order.customer_phone, msg);
-    db.recordWhatsAppSent(session.company.id, order.id, 'admin', session.profile?.full_name || 'Admin');
+    await db.recordWhatsAppSent(session.company.id, order.id, 'admin', session.profile?.full_name || 'Admin');
     showToast('success', isRTL ? 'تم فتح محادثة الواتساب وتسجيل الإرسال' : 'WhatsApp chat opened and logged');
     loadData();
     if (currentOrder && currentOrder.id === order.id) {
-      setOrderEvents(db.getOrderEvents(order.id));
+      const evs = await db.getOrderEvents(order.id);
+      setOrderEvents(evs);
     }
   };
 
@@ -194,9 +197,9 @@ export const OrdersFoundationPage: React.FC = () => {
     showToast('success', isRTL ? 'تم نسخ رابط العميل بنجاح!' : 'Customer link copied to clipboard!', link);
   };
 
-  const resetForm = () => {
+  const resetForm = async () => {
     if (!session) return;
-    const nextNo = db.getNextOrderNumber(session.company.id);
+    const nextNo = await db.getNextOrderNumber(session.company.id);
     setOrderNumber(nextNo);
     setMerchantId(merchants[0]?.id || '');
     setCourierId('');
@@ -244,10 +247,11 @@ export const OrdersFoundationPage: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleOpenDetails = (order: Order) => {
+  const handleOpenDetails = async (order: Order) => {
     setCurrentOrder(order);
-    setOrderEvents(db.getOrderEvents(order.id));
-    const ret = session ? db.getReturnByOrderId(session.company.id, order.id) : null;
+    const evs = await db.getOrderEvents(order.id);
+    setOrderEvents(evs);
+    const ret = session ? await db.getReturnByOrderId(session.company.id, order.id) : null;
     setCurrentOrderReturn(ret || null);
     setIsDetailsModalOpen(true);
   };
@@ -278,7 +282,7 @@ export const OrdersFoundationPage: React.FC = () => {
     setIsFailureModalOpen(true);
   };
 
-  const handleCreateOrder = (e: React.FormEvent) => {
+  const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session) return;
 
@@ -288,7 +292,7 @@ export const OrdersFoundationPage: React.FC = () => {
     }
 
     try {
-      db.createOrder(session.company.id, {
+      await db.createOrder(session.company.id, {
         merchant_id: merchantId,
         courier_id: courierId || null,
         order_number: orderNumber,
@@ -314,12 +318,12 @@ export const OrdersFoundationPage: React.FC = () => {
     }
   };
 
-  const handleUpdateOrder = (e: React.FormEvent) => {
+  const handleUpdateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session || !currentOrder) return;
 
     try {
-      db.updateOrder(session.company.id, currentOrder.id, {
+      await db.updateOrder(session.company.id, currentOrder.id, {
         merchant_id: merchantId,
         courier_id: courierId || null,
         customer_name: customerName.trim(),
@@ -344,12 +348,12 @@ export const OrdersFoundationPage: React.FC = () => {
     }
   };
 
-  const handleAssignCourierSubmit = (e: React.FormEvent) => {
+  const handleAssignCourierSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session || !currentOrder) return;
 
     try {
-      db.updateOrderStatus(session.company.id, currentOrder.id, selectedCourierIdForAssign ? 'assigned' : 'pending', {
+      await db.updateOrderStatus(session.company.id, currentOrder.id, selectedCourierIdForAssign ? 'assigned' : 'pending', {
         courierId: selectedCourierIdForAssign || null
       });
 
@@ -361,7 +365,7 @@ export const OrdersFoundationPage: React.FC = () => {
     }
   };
 
-  const handleStatusChangeRequest = (order: Order, newStatus: OrderStatus) => {
+  const handleStatusChangeRequest = async (order: Order, newStatus: OrderStatus) => {
     if (!session) return;
     if (newStatus === 'failed') {
       handleOpenFailureModal(order);
@@ -369,7 +373,7 @@ export const OrdersFoundationPage: React.FC = () => {
     }
 
     try {
-      db.updateOrderStatus(session.company.id, order.id, newStatus);
+      await db.updateOrderStatus(session.company.id, order.id, newStatus);
       showToast('success', isRTL ? `تم تحديث حالة الشحنة إلى ${newStatus}` : `Status updated to ${newStatus}`);
       loadData();
     } catch (err: any) {
@@ -377,7 +381,7 @@ export const OrdersFoundationPage: React.FC = () => {
     }
   };
 
-  const handleFailureSubmit = (e: React.FormEvent) => {
+  const handleFailureSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session || !currentOrder) return;
 
@@ -387,7 +391,7 @@ export const OrdersFoundationPage: React.FC = () => {
     }
 
     try {
-      db.updateOrderStatus(session.company.id, currentOrder.id, 'failed', {
+      await db.updateOrderStatus(session.company.id, currentOrder.id, 'failed', {
         failureReason: failureReason,
         failureNotes: failureNotes.trim()
       });
@@ -400,10 +404,10 @@ export const OrdersFoundationPage: React.FC = () => {
     }
   };
 
-  const handleCancelOrderSubmit = () => {
+  const handleCancelOrderSubmit = async () => {
     if (!session || !currentOrder) return;
     try {
-      db.updateOrderStatus(session.company.id, currentOrder.id, 'cancelled');
+      await db.updateOrderStatus(session.company.id, currentOrder.id, 'cancelled');
       showToast('info', isRTL ? 'تم إلغاء الشحنة' : 'Order cancelled');
       setIsCancelModalOpen(false);
       loadData();
@@ -412,10 +416,10 @@ export const OrdersFoundationPage: React.FC = () => {
     }
   };
 
-  const handleDeleteOrderSubmit = () => {
+  const handleDeleteOrderSubmit = async () => {
     if (!session || !currentOrder) return;
     try {
-      db.deleteOrder(session.company.id, currentOrder.id);
+      await db.deleteOrder(session.company.id, currentOrder.id);
       showToast('info', isRTL ? 'تم حذف الشحنة من السجل' : 'Order deleted');
       setIsDeleteModalOpen(false);
       setIsDetailsModalOpen(false);
@@ -1040,7 +1044,7 @@ export const OrdersFoundationPage: React.FC = () => {
                     <span>{t.failureReasonDetails}</span>
                   </div>
                   <p className="font-semibold text-xs">
-                    {currentOrder.failure_reason ? (FAILURE_REASONS.find(f => f.key === currentOrder.failure_reason)?.labelAr || currentOrder.failure_reason) : 'غير محدد'}
+                    {currentOrder.failure_reason ? (FAILURE_REASONS[currentOrder.failure_reason as DeliveryFailureReason] || currentOrder.failure_reason) : 'غير محدد'}
                   </p>
                   {currentOrder.failure_notes && (
                     <p className="text-[11px] text-rose-800 bg-white/70 p-2 rounded-lg border border-rose-200">

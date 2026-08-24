@@ -57,12 +57,12 @@ export const CourierOrdersPage: React.FC<CourierOrdersPageProps> = ({ navigate }
   const [failureNote, setFailureNote] = useState('');
   const [isConfirmingFailure, setIsConfirmingFailure] = useState(false);
 
-  const loadOrders = () => {
+  const loadOrders = async () => {
     if (!session || !session.courier) return;
     const companyId = session.company.id;
     const courierId = session.courier.id;
 
-    const list = db.getOrders(companyId, courierId);
+    const list = await db.getOrders(companyId, courierId);
     
     // Sort orders by Priority (Section 5)
     const sorted = [...list].sort((a, b) => {
@@ -93,7 +93,7 @@ export const CourierOrdersPage: React.FC<CourierOrdersPageProps> = ({ navigate }
     setOrders(sorted);
 
     // Map merchants
-    const merchants = db.getMerchants(companyId);
+    const merchants = await db.getMerchants(companyId);
     const mMap: Record<string, string> = {};
     merchants.forEach(m => {
       mMap[m.id] = m.store_name;
@@ -104,10 +104,11 @@ export const CourierOrdersPage: React.FC<CourierOrdersPageProps> = ({ navigate }
   useEffect(() => {
     loadOrders();
 
-    const unsubscribe = subscribeOrderUpdates((updatedOrderId) => {
+    const unsubscribe = subscribeOrderUpdates(async (updatedOrderId) => {
       loadOrders();
       if (selectedOrder && (!updatedOrderId || selectedOrder.id === updatedOrderId)) {
-        const fresh = db.getOrders(session?.company?.id || '', session?.courier?.id).find(o => o.id === selectedOrder.id);
+        const freshList = await db.getOrders(session?.company?.id || '', session?.courier?.id);
+        const fresh = freshList.find(o => o.id === selectedOrder.id);
         if (fresh) setSelectedOrder(fresh);
       }
     });
@@ -160,7 +161,7 @@ export const CourierOrdersPage: React.FC<CourierOrdersPageProps> = ({ navigate }
     }
   };
 
-  const handleSendWhatsApp = (order: Order, e?: React.MouseEvent) => {
+  const handleSendWhatsApp = async (order: Order, e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!session || !session.courier) return;
 
@@ -172,7 +173,7 @@ export const CourierOrdersPage: React.FC<CourierOrdersPageProps> = ({ navigate }
     });
 
     openWhatsAppChat(order.customer_phone, msg);
-    db.recordWhatsAppSent(session.company.id, order.id, 'courier', session.courier.full_name);
+    await db.recordWhatsAppSent(session.company.id, order.id, 'courier', session.courier.full_name);
     showToast('success', isRTL ? 'تم فتح محادثة الواتساب مع العميل' : 'WhatsApp chat opened');
     loadOrders();
   };
@@ -192,10 +193,10 @@ export const CourierOrdersPage: React.FC<CourierOrdersPageProps> = ({ navigate }
     setIsStartDeliveryModalOpen(true);
   };
 
-  const confirmStartDelivery = () => {
+  const confirmStartDelivery = async () => {
     if (!session?.courier || !selectedOrder) return;
     try {
-      db.updateOrderStatus(session.company.id, selectedOrder.id, 'out_for_delivery', {
+      await db.updateOrderStatus(session.company.id, selectedOrder.id, 'out_for_delivery', {
         actorRole: 'courier',
         actorName: session.courier.full_name,
         courierId: session.courier.id,
@@ -215,10 +216,10 @@ export const CourierOrdersPage: React.FC<CourierOrdersPageProps> = ({ navigate }
     setIsMarkDeliveredModalOpen(true);
   };
 
-  const confirmMarkDelivered = () => {
+  const confirmMarkDelivered = async () => {
     if (!session?.courier || !selectedOrder) return;
     try {
-      db.updateOrderStatus(session.company.id, selectedOrder.id, 'delivered', {
+      await db.updateOrderStatus(session.company.id, selectedOrder.id, 'delivered', {
         actorRole: 'courier',
         actorName: session.courier.full_name,
         courierId: session.courier.id,
@@ -251,15 +252,14 @@ export const CourierOrdersPage: React.FC<CourierOrdersPageProps> = ({ navigate }
     setIsConfirmingFailure(true);
   };
 
-  const confirmFailedDelivery = () => {
+  const confirmFailedDelivery = async () => {
     if (!session?.courier || !selectedOrder) return;
     try {
-      db.updateOrderStatus(session.company.id, selectedOrder.id, 'failed', {
+      await db.updateOrderStatus(session.company.id, selectedOrder.id, 'failed', {
         actorRole: 'courier',
         actorName: session.courier.full_name,
         courierId: session.courier.id,
         failureReason: failureReason,
-        failureNote: failureNote.trim(),
         failureNotes: failureNote.trim()
       });
       setIsConfirmingFailure(false);

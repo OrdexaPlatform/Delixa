@@ -42,6 +42,7 @@ export const CourierOrderDetailPage: React.FC<CourierOrderDetailPageProps> = ({ 
 
   const [order, setOrder] = useState<Order | null>(null);
   const [merchant, setMerchant] = useState<Merchant | null>(null);
+  const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Confirmation Modals
@@ -55,19 +56,21 @@ export const CourierOrderDetailPage: React.FC<CourierOrderDetailPageProps> = ({ 
   const [failureNote, setFailureNote] = useState('');
   const [isConfirmingFailure, setIsConfirmingFailure] = useState(false);
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!session || !session.courier) return;
     const companyId = session.company.id;
     const courierId = session.courier.id;
 
     // Security check: courier can only view assigned order
-    const courierOrders = db.getOrders(companyId, courierId);
+    const courierOrders = await db.getOrders(companyId, courierId);
     const found = courierOrders.find(o => o.id === orderId);
     
     if (found) {
       setOrder(found);
-      const m = db.getMerchantById(companyId, found.merchant_id);
-      setMerchant(m);
+      const m = await db.getMerchantById(companyId, found.merchant_id);
+      setMerchant(m || null);
+      const evs = await db.getOrderEvents(found.id);
+      setEvents(evs);
     } else {
       setOrder(null);
     }
@@ -124,7 +127,7 @@ export const CourierOrderDetailPage: React.FC<CourierOrderDetailPageProps> = ({ 
   const isAssigned = order.status === 'assigned';
 
   // WhatsApp sender
-  const handleSendWhatsApp = () => {
+  const handleSendWhatsApp = async () => {
     if (!session?.courier) return;
     const storeName = merchant?.store_name || session.company.name;
     const msg = generateWhatsAppConfirmationMessage({
@@ -134,7 +137,7 @@ export const CourierOrderDetailPage: React.FC<CourierOrderDetailPageProps> = ({ 
     });
 
     openWhatsAppChat(order.customer_phone, msg);
-    db.recordWhatsAppSent(session.company.id, order.id, 'courier', session.courier.full_name);
+    await db.recordWhatsAppSent(session.company.id, order.id, 'courier', session.courier.full_name);
     showToast('success', isRTL ? 'تم فتح محادثة الواتساب مع العميل' : 'WhatsApp chat opened');
     loadData();
   };
@@ -147,10 +150,10 @@ export const CourierOrderDetailPage: React.FC<CourierOrderDetailPageProps> = ({ 
   };
 
   // Start Delivery
-  const confirmStartDelivery = () => {
+  const confirmStartDelivery = async () => {
     if (!session?.courier) return;
     try {
-      db.updateOrderStatus(session.company.id, order.id, 'out_for_delivery', {
+      await db.updateOrderStatus(session.company.id, order.id, 'out_for_delivery', {
         actorRole: 'courier',
         actorName: session.courier.full_name,
         courierId: session.courier.id,
@@ -164,10 +167,10 @@ export const CourierOrderDetailPage: React.FC<CourierOrderDetailPageProps> = ({ 
   };
 
   // Mark Delivered
-  const confirmMarkDelivered = () => {
+  const confirmMarkDelivered = async () => {
     if (!session?.courier) return;
     try {
-      db.updateOrderStatus(session.company.id, order.id, 'delivered', {
+      await db.updateOrderStatus(session.company.id, order.id, 'delivered', {
         actorRole: 'courier',
         actorName: session.courier.full_name,
         courierId: session.courier.id,
@@ -191,15 +194,14 @@ export const CourierOrderDetailPage: React.FC<CourierOrderDetailPageProps> = ({ 
     setIsConfirmingFailure(true);
   };
 
-  const confirmFailedDelivery = () => {
+  const confirmFailedDelivery = async () => {
     if (!session?.courier) return;
     try {
-      db.updateOrderStatus(session.company.id, order.id, 'failed', {
+      await db.updateOrderStatus(session.company.id, order.id, 'failed', {
         actorRole: 'courier',
         actorName: session.courier.full_name,
         courierId: session.courier.id,
         failureReason: failureReason,
-        failureNote: failureNote.trim(),
         failureNotes: failureNote.trim()
       });
       setIsConfirmingFailure(false);
@@ -210,8 +212,6 @@ export const CourierOrderDetailPage: React.FC<CourierOrderDetailPageProps> = ({ 
       showToast('error', isRTL ? 'خطأ' : 'Error', err.message);
     }
   };
-
-  const events = db.getOrderEvents(order.id);
 
   return (
     <div className="max-w-3xl mx-auto space-y-5 pb-24">

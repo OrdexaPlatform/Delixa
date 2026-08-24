@@ -81,11 +81,13 @@ export const MerchantLedgerModal: React.FC<MerchantLedgerModalProps> = ({
   const [adjustmentCategory, setAdjustmentCategory] = useState<'bonus' | 'penalty' | 'correction' | 'fee' | 'other'>('bonus');
   const [adjustmentDescription, setAdjustmentDescription] = useState('');
 
-  const loadLedgerData = () => {
+  const loadLedgerData = async () => {
     if (!merchant || !companyId) return;
-    const sum = db.getMerchantFinancialSummary(companyId, merchant.id);
-    const txs = db.getMerchantTransactions(companyId, merchant.id);
-    const sets = db.getMerchantSettlements(companyId, merchant.id);
+    const [sum, txs, sets] = await Promise.all([
+      db.getMerchantFinancialSummary(companyId, merchant.id),
+      db.getMerchantTransactions(companyId, merchant.id),
+      db.getMerchantSettlements(companyId, merchant.id),
+    ]);
     
     setSummary(sum);
     setTransactions(txs);
@@ -111,7 +113,7 @@ export const MerchantLedgerModal: React.FC<MerchantLedgerModalProps> = ({
 
   if (!merchant) return null;
 
-  const handleCreateSettlement = (e: React.FormEvent) => {
+  const handleCreateSettlement = async (e: React.FormEvent) => {
     e.preventDefault();
     const amount = Number(settlementAmount);
     if (!amount || amount <= 0) {
@@ -120,14 +122,14 @@ export const MerchantLedgerModal: React.FC<MerchantLedgerModalProps> = ({
     }
 
     try {
-      db.createMerchantSettlement(companyId, {
-        merchantId: merchant.id,
+      await db.createMerchantSettlement(companyId, {
+        merchant_id: merchant.id,
         amount,
         settlementType: settlementType as any,
         payment_method: paymentMethod,
         reference_number: referenceNumber.trim() || undefined,
         notes: settlementNotes.trim() || undefined,
-        settledBy: session?.profile.full_name || 'Admin',
+        settled_by: session?.profile.full_name || 'Admin',
       });
 
       showToast(
@@ -146,7 +148,7 @@ export const MerchantLedgerModal: React.FC<MerchantLedgerModalProps> = ({
     }
   };
 
-  const handleCreateAdjustment = (e: React.FormEvent) => {
+  const handleCreateAdjustment = async (e: React.FormEvent) => {
     e.preventDefault();
     const amount = Number(adjustmentAmount);
     if (!amount || amount <= 0) {
@@ -159,13 +161,11 @@ export const MerchantLedgerModal: React.FC<MerchantLedgerModalProps> = ({
     }
 
     try {
-      db.addMerchantTransaction(companyId, {
+      await db.addMerchantTransaction(companyId, {
         merchant_id: merchant.id,
         direction: adjustmentType,
         transaction_type: adjustmentType === 'credit' ? 'CREDIT_TO_MERCHANT' : 'DEBIT_FROM_MERCHANT',
         reference_type: 'manual',
-        type: adjustmentType,
-        category: adjustmentCategory === 'bonus' ? 'bonus' : adjustmentCategory === 'penalty' ? 'penalty' : 'manual_adjustment',
         amount,
         description: `قيد يدوي (${adjustmentCategory}): ${adjustmentDescription.trim()}`,
         created_by: session?.profile.full_name || 'Admin',

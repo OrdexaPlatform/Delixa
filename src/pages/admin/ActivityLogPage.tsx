@@ -43,18 +43,23 @@ export const ActivityLogPage: React.FC<ActivityLogPageProps> = ({ navigate }) =>
   const [endDate, setEndDate] = useState<string>('');
   const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'last7days'>('all');
 
-  const loadEvents = () => {
+  const loadEvents = async () => {
     if (!companyId) return;
     setLoading(true);
-    const all = db.getAllOrderEvents(companyId, {
-      actor: actorFilter !== 'all' ? actorFilter : undefined,
-      eventType: eventTypeFilter !== 'all' ? eventTypeFilter : undefined,
-      startDate: startDate || undefined,
-      endDate: endDate || undefined,
-      search: searchQuery.trim() || undefined,
-    });
-    setEvents(all);
-    setLoading(false);
+    try {
+      const all = await db.getAllOrderEvents(companyId, {
+        actor: actorFilter !== 'all' ? actorFilter : undefined,
+        eventType: eventTypeFilter !== 'all' ? eventTypeFilter : undefined,
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+        search: searchQuery.trim() || undefined,
+      });
+      setEvents(all);
+    } catch (err) {
+      console.error('Error loading events:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {

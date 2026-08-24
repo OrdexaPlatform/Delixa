@@ -76,13 +76,13 @@ export const CourierDashboardPage: React.FC<CourierDashboardPageProps> = ({ navi
   const [failureNote, setFailureNote] = useState('');
   const [isConfirmingFailure, setIsConfirmingFailure] = useState(false);
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!session || !session.courier) return;
     const companyId = session.company.id;
     const courierId = session.courier.id;
 
     // Strict RLS: query orders strictly for this courier
-    const list = db.getOrders(companyId, courierId);
+    const list = await db.getOrders(companyId, courierId);
     
     // Sort orders by Priority (Section 5)
     const sorted = [...list].sort((a, b) => {
@@ -113,7 +113,7 @@ export const CourierDashboardPage: React.FC<CourierDashboardPageProps> = ({ navi
     setOrders(sorted);
 
     // Map merchants
-    const merchants = db.getMerchants(companyId);
+    const merchants = await db.getMerchants(companyId);
     const mMap: Record<string, string> = {};
     merchants.forEach(m => {
       mMap[m.id] = m.store_name;
@@ -121,10 +121,10 @@ export const CourierDashboardPage: React.FC<CourierDashboardPageProps> = ({ navi
     setMerchantsMap(mMap);
 
     // Fetch courier collection summary (Prompt 4 Section 3)
-    const colSummary = db.getCourierCollectionSummary(companyId, courierId);
+    const colSummary = await db.getCourierCollectionSummary(companyId, courierId);
     setCollectionSummary(colSummary);
 
-    const m = db.getCourierMetrics(companyId, courierId);
+    const m = await db.getCourierMetrics(companyId, courierId);
     setMetrics({
       todayTotal: m.todayTotal,
       todayConfirmed: m.todayConfirmed,
@@ -159,10 +159,10 @@ export const CourierDashboardPage: React.FC<CourierDashboardPageProps> = ({ navi
     setIsStartDeliveryModalOpen(true);
   };
 
-  const confirmStartDelivery = () => {
+  const confirmStartDelivery = async () => {
     if (!session?.courier || !selectedOrder) return;
     try {
-      db.updateOrderStatus(session.company.id, selectedOrder.id, 'out_for_delivery', {
+      await db.updateOrderStatus(session.company.id, selectedOrder.id, 'out_for_delivery', {
         actorRole: 'courier',
         actorName: session.courier.full_name,
         courierId: session.courier.id,
@@ -181,10 +181,10 @@ export const CourierDashboardPage: React.FC<CourierDashboardPageProps> = ({ navi
     setIsMarkDeliveredModalOpen(true);
   };
 
-  const confirmMarkDelivered = () => {
+  const confirmMarkDelivered = async () => {
     if (!session?.courier || !selectedOrder) return;
     try {
-      db.updateOrderStatus(session.company.id, selectedOrder.id, 'delivered', {
+      await db.updateOrderStatus(session.company.id, selectedOrder.id, 'delivered', {
         actorRole: 'courier',
         actorName: session.courier.full_name,
         courierId: session.courier.id,
@@ -216,15 +216,14 @@ export const CourierDashboardPage: React.FC<CourierDashboardPageProps> = ({ navi
     setIsConfirmingFailure(true);
   };
 
-  const confirmFailedDelivery = () => {
+  const confirmFailedDelivery = async () => {
     if (!session?.courier || !selectedOrder) return;
     try {
-      db.updateOrderStatus(session.company.id, selectedOrder.id, 'failed', {
+      await db.updateOrderStatus(session.company.id, selectedOrder.id, 'failed', {
         actorRole: 'courier',
         actorName: session.courier.full_name,
         courierId: session.courier.id,
         failureReason: failureReason,
-        failureNote: failureNote.trim(),
         failureNotes: failureNote.trim()
       });
       setIsConfirmingFailure(false);
@@ -236,7 +235,7 @@ export const CourierDashboardPage: React.FC<CourierDashboardPageProps> = ({ navi
     }
   };
 
-  const handleSendWhatsApp = (order: Order, e?: React.MouseEvent) => {
+  const handleSendWhatsApp = async (order: Order, e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!session || !session.courier) return;
 
@@ -248,7 +247,7 @@ export const CourierDashboardPage: React.FC<CourierDashboardPageProps> = ({ navi
     });
 
     openWhatsAppChat(order.customer_phone, msg);
-    db.recordWhatsAppSent(session.company.id, order.id, 'courier', session.courier.full_name);
+    await db.recordWhatsAppSent(session.company.id, order.id, 'courier', session.courier.full_name);
     showToast('success', isRTL ? 'تم فتح محادثة الواتساب مع العميل' : 'WhatsApp chat opened');
     loadData();
   };

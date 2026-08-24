@@ -35,13 +35,17 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ navigate
   const courierId = session?.courier?.id;
   const companyId = session?.company?.id;
 
-  const loadNotifications = () => {
+  const loadNotifications = async () => {
     if (!companyId) return;
-    const items = db.getNotifications(companyId, {
-      role: isAdmin ? 'admin' : 'courier',
-      courierId: courierId,
-    });
-    setNotifications(items);
+    try {
+      const items = await db.getNotifications(companyId, {
+        role: isAdmin ? 'admin' : 'courier',
+        courierId: courierId,
+      });
+      setNotifications(items);
+    } catch (err) {
+      console.error('Error loading notifications:', err);
+    }
   };
 
   useEffect(() => {
@@ -97,26 +101,26 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ navigate
     return true;
   });
 
-  const handleMarkAsRead = (id: string, e?: React.MouseEvent) => {
+  const handleMarkAsRead = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (!companyId) return;
-    db.markNotificationAsRead(companyId, id);
+    await db.markNotificationAsRead(companyId, id);
     loadNotifications();
   };
 
-  const handleMarkAllAsRead = () => {
+  const handleMarkAllAsRead = async () => {
     if (!companyId) return;
-    db.markAllNotificationsAsRead(companyId, {
+    await db.markAllNotificationsAsRead(companyId, {
       role: isAdmin ? 'admin' : 'courier',
       courierId: courierId,
     });
     loadNotifications();
   };
 
-  const handleNotificationClick = (item: AppNotification) => {
+  const handleNotificationClick = async (item: AppNotification) => {
     if (!companyId) return;
     if (!isItemRead(item)) {
-      db.markNotificationAsRead(companyId, item.id);
+      await db.markNotificationAsRead(companyId, item.id);
       loadNotifications();
     }
     setIsOpen(false);

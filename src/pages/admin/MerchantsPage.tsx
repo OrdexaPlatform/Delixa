@@ -63,12 +63,12 @@ export const MerchantsPage: React.FC = () => {
   const [notes, setNotes] = useState('');
   const [status, setStatus] = useState<MerchantStatus>('active');
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!session) return;
     const companyId = session.company.id;
-    const mList = db.getMerchants(companyId);
-    const oList = db.getOrders(companyId);
-    const sList = db.getAllMerchantsFinancialSummaries(companyId);
+    const mList = await db.getMerchants(companyId);
+    const oList = await db.getOrders(companyId);
+    const sList = await db.getAllMerchantsFinancialSummaries(companyId);
     
     const sMap: Record<string, MerchantFinancialSummary> = {};
     sList.forEach(s => { sMap[s.merchant_id] = s; });
@@ -132,7 +132,7 @@ export const MerchantsPage: React.FC = () => {
     setIsDeleteModalOpen(true);
   };
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session) return;
     if (!storeName.trim() || !ownerName.trim() || !phone.trim() || !address.trim()) {
@@ -141,7 +141,7 @@ export const MerchantsPage: React.FC = () => {
     }
 
     try {
-      db.createMerchant(session.company.id, {
+      await db.createMerchant(session.company.id, {
         store_name: storeName.trim(),
         brand_name: brandName.trim() || undefined,
         owner_name: ownerName.trim(),
@@ -162,12 +162,12 @@ export const MerchantsPage: React.FC = () => {
     }
   };
 
-  const handleUpdate = (e: React.FormEvent) => {
+  const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session || !currentMerchant) return;
 
     try {
-      db.updateMerchant(session.company.id, currentMerchant.id, {
+      await db.updateMerchant(session.company.id, currentMerchant.id, {
         store_name: storeName.trim(),
         brand_name: brandName.trim() || undefined,
         owner_name: ownerName.trim(),
@@ -188,10 +188,10 @@ export const MerchantsPage: React.FC = () => {
     }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!session || !currentMerchant) return;
     try {
-      db.deleteMerchant(session.company.id, currentMerchant.id);
+      await db.deleteMerchant(session.company.id, currentMerchant.id);
       showToast('info', isRTL ? 'تم حذف المتجر من القائمة' : 'Merchant deleted');
       setIsDeleteModalOpen(false);
       setIsDetailsModalOpen(false);
@@ -202,11 +202,11 @@ export const MerchantsPage: React.FC = () => {
     }
   };
 
-  const handleToggleStatus = (m: Merchant, e?: React.MouseEvent) => {
+  const handleToggleStatus = async (m: Merchant, e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!session) return;
     const newStatus: MerchantStatus = m.status === 'active' ? 'inactive' : 'active';
-    db.updateMerchant(session.company.id, m.id, { status: newStatus });
+    await db.updateMerchant(session.company.id, m.id, { status: newStatus });
     showToast('info', isRTL ? `تم تغيير حالة المتجر إلى ${newStatus === 'active' ? 'نشط' : 'غير نشط'}` : `Merchant status updated to ${newStatus}`);
     loadData();
   };

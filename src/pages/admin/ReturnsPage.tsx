@@ -58,14 +58,14 @@ export const ReturnsPage: React.FC = () => {
   const [selectedReturnForInvoice, setSelectedReturnForInvoice] = useState<ReturnRecord | null>(null);
   const [selectedReturnForStatus, setSelectedReturnForStatus] = useState<ReturnRecord | null>(null);
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!companyId) return;
 
     const rets = isCourier && courierId 
-      ? db.getReturns(companyId, courierId) 
-      : db.getReturns(companyId);
+      ? await db.getReturns(companyId, courierId) 
+      : await db.getReturns(companyId);
     setReturns(rets);
-    const m = db.getReturnMetrics(companyId, isCourier ? courierId : undefined);
+    const m = await db.getReturnMetrics(companyId, isCourier ? courierId : undefined);
     setMetrics({
       total: m.totalReturns,
       created: m.createdCount,
@@ -75,18 +75,18 @@ export const ReturnsPage: React.FC = () => {
       total_amount: m.totalReturnValue,
     });
 
-    const ords = db.getOrders(companyId);
+    const ords = await db.getOrders(companyId);
     const oMap: Record<string, Order> = {};
     ords.forEach(o => { oMap[o.id] = o; });
     setOrdersMap(oMap);
 
-    const mList = db.getMerchants(companyId);
+    const mList = await db.getMerchants(companyId);
     setMerchantsList(mList);
     const mMap: Record<string, Merchant> = {};
     mList.forEach(m => { mMap[m.id] = m; });
     setMerchantsMap(mMap);
 
-    const cList = db.getCouriers(companyId);
+    const cList = await db.getCouriers(companyId);
     setCouriersList(cList);
     const cMap: Record<string, Courier> = {};
     cList.forEach(c => { cMap[c.id] = c; });
@@ -134,18 +134,18 @@ export const ReturnsPage: React.FC = () => {
   };
 
   const getReasonLabel = (reasonKey: string) => {
-    const found = RETURN_REASONS.find(r => r.key === reasonKey);
+    const found = RETURN_REASONS.find(r => r.id === reasonKey);
     if (found) {
-      return isRTL ? found.labelAr : found.labelEn;
+      return isRTL ? found.label : found.enLabel;
     }
     return reasonKey;
   };
 
   // Status Change Handler
-  const handleUpdateStatus = (returnId: string, newStatus: ReturnStatus, courierIdParam?: string) => {
+  const handleUpdateStatus = async (returnId: string, newStatus: ReturnStatus, courierIdParam?: string) => {
     try {
       if (courierIdParam !== undefined && !isCourier) {
-        db.updateReturn(
+        await db.updateReturn(
           companyId,
           returnId,
           { courier_id: courierIdParam || null },
@@ -153,14 +153,13 @@ export const ReturnsPage: React.FC = () => {
         );
       }
 
-      db.updateReturnStatus(
+      await db.updateReturnStatus(
         companyId, 
         returnId, 
         newStatus, 
         { 
           role: isCourier ? 'courier' : 'admin', 
-          name: isCourier ? (session?.courier?.full_name || 'مندوب التوصيل') : (session?.profile.full_name || 'Admin'),
-          courierId: isCourier ? courierId : undefined
+          name: isCourier ? (session?.courier?.full_name || 'مندوب التوصيل') : (session?.profile.full_name || 'Admin')
         }
       );
 

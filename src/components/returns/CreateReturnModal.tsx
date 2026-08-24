@@ -73,32 +73,42 @@ export const CreateReturnModal: React.FC<CreateReturnModalProps> = ({
   useEffect(() => {
     if (!isOpen || !companyId) return;
 
-    const merchants = db.getMerchants(companyId);
-    const mMap: Record<string, Merchant> = {};
-    merchants.forEach(m => { mMap[m.id] = m; });
-    setMerchantsMap(mMap);
+    let isMounted = true;
+    const load = async () => {
+      const [merchants, couriers, allOrders, existingReturns] = await Promise.all([
+        db.getMerchants(companyId),
+        db.getCouriers(companyId),
+        db.getOrders(companyId),
+        db.getReturns(companyId),
+      ]);
+      if (!isMounted) return;
 
-    const couriers = db.getCouriers(companyId).filter(c => c.status === 'active');
-    setCouriersList(couriers);
+      const mMap: Record<string, Merchant> = {};
+      merchants.forEach(m => { mMap[m.id] = m; });
+      setMerchantsMap(mMap);
 
-    const allOrders = db.getOrders(companyId);
-    const existingReturns = db.getReturns(companyId);
-    const returnOrderIds = new Set(existingReturns.map(r => r.order_id));
+      setCouriersList(couriers.filter(c => c.status === 'active'));
 
-    // Eligible orders: status is delivered or failed, and no return already registered
-    const eligible = allOrders.filter(o => 
-      (o.status === 'delivered' || o.status === 'failed') &&
-      (!returnOrderIds.has(o.id) || (targetOrder && targetOrder.id === o.id))
-    );
-    setAvailableOrders(eligible);
+      const returnOrderIds = new Set(existingReturns.map(r => r.order_id));
 
-    if (targetOrder) {
-      initFormForOrder(targetOrder);
-    } else if (eligible.length > 0) {
-      initFormForOrder(eligible[0]);
-    } else {
-      setSelectedOrder(null);
-    }
+      // Eligible orders: status is delivered or failed, and no return already registered
+      const eligible = allOrders.filter(o => 
+        (o.status === 'delivered' || o.status === 'failed') &&
+        (!returnOrderIds.has(o.id) || (targetOrder && targetOrder.id === o.id))
+      );
+      setAvailableOrders(eligible);
+
+      if (targetOrder) {
+        initFormForOrder(targetOrder);
+      } else if (eligible.length > 0) {
+        initFormForOrder(eligible[0]);
+      } else {
+        setSelectedOrder(null);
+      }
+    };
+    load();
+
+    return () => { isMounted = false; };
   }, [isOpen, companyId, targetOrder]);
 
   const initFormForOrder = (order: Order) => {
@@ -157,7 +167,7 @@ export const CreateReturnModal: React.FC<CreateReturnModalProps> = ({
     merchantChargeAmount = 0;
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedOrder) {
       setErrorMessage('يرجى اختيار الشحنة المراد إرجاعها');
@@ -193,7 +203,7 @@ export const CreateReturnModal: React.FC<CreateReturnModalProps> = ({
     setErrorMessage(null);
 
     try {
-      const newReturn = db.createReturn(companyId, {
+      const newReturn = await db.createReturn(companyId, {
         order_id: selectedOrder.id,
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim(),
@@ -201,15 +211,12 @@ export const CreateReturnModal: React.FC<CreateReturnModalProps> = ({
         return_amount: numReturnAmount,
         return_shipping_cost: numShippingCost,
         other_cost: numOtherCost,
-        return_cost_payer: returnCostPayer,
-        refundable_amount: numRefundable,
-        return_cost_amount: numCost,
+        total_return_amount: numCost,
         return_reason: returnReason,
         other_reason: otherReason.trim() || undefined,
         notes: notes.trim() || undefined,
         courier_id: assignedCourierId || null,
         created_by: session?.profile.full_name || 'Admin',
-        actorName: session?.profile.full_name || 'Admin'
       });
 
       showToast(
@@ -586,8 +593,8 @@ export const CreateReturnModal: React.FC<CreateReturnModalProps> = ({
                 className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {RETURN_REASONS.map(r => (
-                  <option key={r.key} value={r.key}>
-                    {isRTL ? r.labelAr : r.labelEn}
+                  <option key={r.id} value={r.id}>
+                    {isRTL ? r.label : r.enLabel}
                   </option>
                 ))}
               </select>

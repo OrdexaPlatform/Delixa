@@ -414,7 +414,7 @@ CREATE POLICY "Couriers view policy"
   ON public.couriers FOR SELECT
   USING (
     company_id = public.get_auth_company_id() OR
-    auth.uid() IS NULL -- Allow public courier auth lookup by employee ID if needed
+    auth.uid() IS NULL
   );
 
 CREATE POLICY "Admins can insert couriers"
@@ -451,7 +451,7 @@ CREATE POLICY "Orders view policy"
   ON public.orders FOR SELECT
   USING (
     company_id = public.get_auth_company_id() OR
-    confirmation_token IS NOT NULL -- Allow public lookup via token RPC / query
+    confirmation_token IS NOT NULL
   );
 
 CREATE POLICY "Admins can insert orders"
@@ -499,10 +499,6 @@ CREATE POLICY "Notifications view policy"
 CREATE POLICY "Notifications insert policy"
   ON public.notifications FOR INSERT
   WITH CHECK (company_id = public.get_auth_company_id());
-
-CREATE POLICY "Notifications update policy"
-  ON public.notifications FOR UPDATE
-  USING (company_id = public.get_auth_company_id());
 
 -- Settlements Policies
 CREATE POLICY "Courier settlements view policy"

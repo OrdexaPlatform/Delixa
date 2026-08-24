@@ -59,11 +59,13 @@ export const CouriersPage: React.FC = () => {
 
   const [showPassword, setShowPassword] = useState(false);
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!session) return;
     const companyId = session.company.id;
-    const cList = db.getCouriers(companyId);
-    const oList = db.getOrders(companyId);
+    const [cList, oList] = await Promise.all([
+      db.getCouriers(companyId),
+      db.getOrders(companyId),
+    ]);
     setCouriers(cList);
     setOrders(oList);
   };
@@ -73,9 +75,7 @@ export const CouriersPage: React.FC = () => {
   }, [session]);
 
   const generateNextEmployeeId = () => {
-    if (!session) return 'CR-101';
-    const existing = db.getCouriers(session.company.id);
-    const nextNum = existing.length + 101;
+    const nextNum = couriers.length + 101;
     return `CR-${nextNum}`;
   };
 
@@ -132,7 +132,7 @@ export const CouriersPage: React.FC = () => {
     setIsDeleteModalOpen(true);
   };
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session) return;
 
@@ -147,11 +147,11 @@ export const CouriersPage: React.FC = () => {
     }
 
     try {
-      db.createCourier(session.company.id, {
-        fullName: fullName.trim(),
+      await db.createCourier(session.company.id, {
+        full_name: fullName.trim(),
         phone: phone.trim(),
         area: area.trim(),
-        employeeId: employeeId.trim(),
+        employee_id: employeeId.trim(),
         password: password.trim(),
         status,
       });
@@ -165,12 +165,12 @@ export const CouriersPage: React.FC = () => {
     }
   };
 
-  const handleUpdate = (e: React.FormEvent) => {
+  const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session || !currentCourier) return;
 
     try {
-      db.updateCourier(session.company.id, currentCourier.id, {
+      await db.updateCourier(session.company.id, currentCourier.id, {
         full_name: fullName.trim(),
         phone: phone.trim(),
         area: area.trim(),
@@ -187,7 +187,7 @@ export const CouriersPage: React.FC = () => {
     }
   };
 
-  const handleResetPasswordSubmit = (e: React.FormEvent) => {
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session || !currentCourier) return;
 
@@ -197,7 +197,7 @@ export const CouriersPage: React.FC = () => {
     }
 
     try {
-      db.updateCourier(session.company.id, currentCourier.id, {
+      await db.updateCourier(session.company.id, currentCourier.id, {
         password: newPassword.trim()
       });
 
@@ -209,10 +209,10 @@ export const CouriersPage: React.FC = () => {
     }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!session || !currentCourier) return;
     try {
-      db.deleteCourier(session.company.id, currentCourier.id);
+      await db.deleteCourier(session.company.id, currentCourier.id);
       showToast('info', isRTL ? 'تم حذف المندوب من القائمة' : 'Courier removed');
       setIsDeleteModalOpen(false);
       setIsDetailsModalOpen(false);
@@ -223,11 +223,11 @@ export const CouriersPage: React.FC = () => {
     }
   };
 
-  const handleToggleStatus = (c: Courier, e?: React.MouseEvent) => {
+  const handleToggleStatus = async (c: Courier, e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!session) return;
     const newStatus: CourierStatus = c.status === 'active' ? 'inactive' : 'active';
-    db.updateCourier(session.company.id, c.id, { status: newStatus });
+    await db.updateCourier(session.company.id, c.id, { status: newStatus });
     showToast('info', isRTL ? `تم تحديث حالة المندوب إلى ${newStatus === 'active' ? 'نشط' : 'غير نشط'}` : `Courier status changed to ${newStatus}`);
     loadData();
   };
@@ -255,11 +255,29 @@ export const CouriersPage: React.FC = () => {
 
   const getCourierStats = (courierId: string) => {
     const cOrders = getCourierOrders(courierId);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayOrders = cOrders.filter(o => o.delivery_date === todayStr);
+
     const delivered = cOrders.filter(o => o.status === 'delivered').length;
     const failed = cOrders.filter(o => o.status === 'failed').length;
     const active = cOrders.filter(o => o.status === 'assigned' || o.status === 'out_for_delivery').length;
     const codTotal = cOrders.filter(o => o.status === 'delivered').reduce((sum, o) => sum + (Number(o.cod_amount) || 0), 0);
-    return { total: cOrders.length, delivered, failed, active, codTotal };
+
+    return {
+      total: cOrders.length,
+      delivered,
+      failed,
+      active,
+      codTotal,
+      todayAssigned: todayOrders.length,
+      todayDelivered: todayOrders.filter(o => o.status === 'delivered').length,
+      todayFailed: todayOrders.filter(o => o.status === 'failed').length,
+      todayCancelled: todayOrders.filter(o => o.status === 'cancelled').length,
+      totalAssigned: cOrders.length,
+      totalDelivered: delivered,
+      totalFailed: failed,
+      totalCodDelivered: codTotal,
+    };
   };
 
   // Filtered couriers
@@ -574,8 +592,6 @@ export const CouriersPage: React.FC = () => {
 
             {/* Courier Performance Stats (Section 20: Today's Performance & Overall Performance) */}
             {(() => {
-              const companyId = session?.company?.id || '';
-              const courierMetrics = db.getCourierMetrics(companyId, currentCourier.id);
               const stats = getCourierStats(currentCourier.id);
 
               return (
@@ -590,19 +606,19 @@ export const CouriersPage: React.FC = () => {
                     <div className="grid grid-cols-4 gap-2 text-center">
                       <div className="p-2 bg-blue-50/80 border border-blue-100 rounded-lg">
                         <span className="text-[9px] text-blue-700 font-bold block">شحنات اليوم</span>
-                        <span className="text-base font-black text-blue-900 font-mono">{courierMetrics.todayAssigned}</span>
+                        <span className="text-base font-black text-blue-900 font-mono">{stats.todayAssigned}</span>
                       </div>
                       <div className="p-2 bg-emerald-50/80 border border-emerald-100 rounded-lg">
                         <span className="text-[9px] text-emerald-700 font-bold block">سُلمت اليوم</span>
-                        <span className="text-base font-black text-emerald-900 font-mono">{courierMetrics.todayDelivered}</span>
+                        <span className="text-base font-black text-emerald-900 font-mono">{stats.todayDelivered}</span>
                       </div>
                       <div className="p-2 bg-red-50/80 border border-red-100 rounded-lg">
                         <span className="text-[9px] text-red-700 font-bold block">تعثرت اليوم</span>
-                        <span className="text-base font-black text-red-900 font-mono">{courierMetrics.todayFailed}</span>
+                        <span className="text-base font-black text-red-900 font-mono">{stats.todayFailed}</span>
                       </div>
                       <div className="p-2 bg-rose-50/80 border border-rose-100 rounded-lg">
                         <span className="text-[9px] text-rose-700 font-bold block">ملغاة اليوم</span>
-                        <span className="text-base font-black text-rose-900 font-mono">{courierMetrics.todayCancelled}</span>
+                        <span className="text-base font-black text-rose-900 font-mono">{stats.todayCancelled}</span>
                       </div>
                     </div>
                   </div>
@@ -616,19 +632,19 @@ export const CouriersPage: React.FC = () => {
                     <div className="grid grid-cols-4 gap-2 text-center">
                       <div className="p-2 bg-white border border-slate-200 rounded-lg">
                         <span className="text-[9px] text-slate-600 font-bold block">إجمالي المعين</span>
-                        <span className="text-base font-black text-slate-900 font-mono">{courierMetrics.totalAssigned}</span>
+                        <span className="text-base font-black text-slate-900 font-mono">{stats.totalAssigned}</span>
                       </div>
                       <div className="p-2 bg-emerald-100/70 border border-emerald-300 rounded-lg">
                         <span className="text-[9px] text-emerald-800 font-bold block">إجمالي التسليم</span>
-                        <span className="text-base font-black text-emerald-950 font-mono">{courierMetrics.totalDelivered}</span>
+                        <span className="text-base font-black text-emerald-950 font-mono">{stats.totalDelivered}</span>
                       </div>
                       <div className="p-2 bg-rose-100/70 border border-rose-300 rounded-lg">
                         <span className="text-[9px] text-rose-800 font-bold block">إجمالي التعثر</span>
-                        <span className="text-base font-black text-rose-950 font-mono">{courierMetrics.totalFailed}</span>
+                        <span className="text-base font-black text-rose-950 font-mono">{stats.totalFailed}</span>
                       </div>
                       <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg">
                         <span className="text-[9px] text-amber-800 font-bold block">تحصيل COD</span>
-                        <span className="text-xs font-black text-amber-950 font-mono">{Number(courierMetrics.totalCodDelivered).toLocaleString()} ج.م</span>
+                        <span className="text-xs font-black text-amber-950 font-mono">{Number(stats.totalCodDelivered).toLocaleString()} ج.م</span>
                       </div>
                     </div>
                   </div>

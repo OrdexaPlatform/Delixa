@@ -91,17 +91,19 @@ export const CollectionsPage: React.FC<CollectionsPageProps> = ({ navigate }) =>
     setIsReceiptModalOpen(true);
   };
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!session) return;
     const companyId = session.company.id;
-    const allSummaries = db.getAllCouriersCollections(companyId);
-    const allSettlements = db.getSettlements(companyId);
+    const [allSummaries, allSettlements] = await Promise.all([
+      db.getAllCouriersCollections(companyId),
+      db.getSettlements(companyId),
+    ]);
     setSummaries(allSummaries);
     setSettlements(allSettlements);
 
     // If detail modal is open, refresh detail courier summary
     if (detailCourierSummary) {
-      const refreshed = db.getCourierCollectionSummary(companyId, detailCourierSummary.courier_id);
+      const refreshed = await db.getCourierCollectionSummary(companyId, detailCourierSummary.courier_id);
       setDetailCourierSummary(refreshed);
     }
   };
@@ -194,7 +196,7 @@ export const CollectionsPage: React.FC<CollectionsPageProps> = ({ navigate }) =>
     ? Math.max(0, Math.round((currentExpected - parsedReceivedAmount) * 100) / 100)
     : currentExpected;
 
-  const handleConfirmSettlement = (e: React.FormEvent) => {
+  const handleConfirmSettlement = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session || !selectedCourierSummary) return;
 
@@ -213,11 +215,10 @@ export const CollectionsPage: React.FC<CollectionsPageProps> = ({ navigate }) =>
 
     setIsSubmitting(true);
     try {
-      const newSettlement = db.createSettlement(session.company.id, {
-        courierId: selectedCourierSummary.courier_id,
-        receivedAmount: amount,
-        settledBy: session.profile.full_name || 'مدير النظام',
-        settledByProfileId: session.profile.id,
+      const newSettlement = await db.createSettlement(session.company.id, {
+        courier_id: selectedCourierSummary.courier_id,
+        received_amount: amount,
+        settled_by: session.profile.full_name || 'مدير النظام',
         notes: settlementNotes.trim() || undefined,
       });
 

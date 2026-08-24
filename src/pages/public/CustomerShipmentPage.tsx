@@ -56,14 +56,14 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
   const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
 
   // Fetch Order by Token
-  const loadOrder = () => {
+  const loadOrder = async () => {
     if (!token) {
       setErrorMessage(isAr ? 'رابط الشحنة غير صالح' : 'Invalid shipment link');
       setLoading(false);
       return;
     }
 
-    const res = db.getOrderByToken(token);
+    const res = await db.getOrderByToken(token);
     if (!res) {
       setErrorMessage(
         isAr
@@ -75,12 +75,12 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
       setCompany(null);
     } else {
       setOrder(res.order);
-      setMerchant(res.merchant);
-      setCompany(res.company);
+      setMerchant(res.merchant || null);
+      setCompany(res.company || null);
       setErrorMessage(null);
 
       // Record link opened event
-      db.recordCustomerLinkOpened(token);
+      await db.recordCustomerLinkOpened(token);
     }
     setLoading(false);
   };
@@ -105,7 +105,7 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
     setSuccessNotice(null);
 
     try {
-      const res = db.customerConfirmDelivery(token);
+      const res = await db.customerConfirmDelivery(token);
       if (res.success && res.order) {
         setOrder(res.order);
         setSuccessNotice(isAr ? 'تم تأكيد موعد الاستلام بنجاح! مندوبنا سيتواصل معك.' : 'Delivery confirmed successfully!');
@@ -127,7 +127,7 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
     setSuccessNotice(null);
 
     try {
-      const res = db.customerRescheduleDelivery(
+      const res = await db.customerRescheduleDelivery(
         token,
         selectedDate,
         selectedSlot.from,
@@ -160,7 +160,7 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
     setSuccessNotice(null);
 
     try {
-      const res = db.customerCancelDelivery(token);
+      const res = await db.customerCancelDelivery(token);
       if (res.success && res.order) {
         setOrder(res.order);
         setShowCancelModal(false);
