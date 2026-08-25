@@ -290,8 +290,9 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, currentPath,
                       id="logout-btn"
                       onClick={() => {
                         setShowUserMenu(false);
-                        logout();
-                        navigate('/login');
+                        const isCourier = session.profile.role === 'courier';
+                        logout(isCourier ? 'courier' : 'admin');
+                        navigate(isCourier ? '/login/courier' : '/login/admin');
                       }}
                       className="w-full text-start px-4 py-2 text-xs text-rose-600 hover:bg-rose-50 flex items-center gap-2 transition-colors border-t border-slate-100 cursor-pointer"
                     >

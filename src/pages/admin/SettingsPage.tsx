@@ -382,7 +382,7 @@ CREATE POLICY "Strict Tenant Isolation for Returns"
 
         <div className="flex items-center gap-2">
           <button
-            onClick={logout}
+            onClick={() => logout('admin')}
             className="px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
           >
             <LogOut className="w-4 h-4 text-rose-600" />

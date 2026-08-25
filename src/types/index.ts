@@ -326,6 +326,34 @@ export interface CourierCollectionSummary {
 
 export type SessionMode = 'demo' | 'production';
 
+export interface CourierSession {
+  courier_id: string;
+  company_id: string;
+  employee_id: string;
+  full_name: string;
+  phone: string;
+  role: 'courier';
+  mode: SessionMode;
+  company: Company;
+  courier: Courier;
+}
+
+export interface AdminSession {
+  admin_id: string;
+  company_id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  role: 'admin';
+  mode: SessionMode;
+  company: Company;
+  profile: Profile;
+  user: {
+    id: string;
+    email: string;
+  };
+}
+
 export interface AuthSession {
   mode: SessionMode;
   user: {
@@ -335,6 +363,8 @@ export interface AuthSession {
   profile: Profile;
   company: Company;
   courier?: Courier; // populated if role is courier
+  courier_id?: string;
+  employee_id?: string;
 }
 
 export interface ToastMessage {

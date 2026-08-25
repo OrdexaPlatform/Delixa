@@ -4,7 +4,8 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { Header } from './components/common/Header';
 import { Sidebar } from './components/common/Sidebar';
-import { ProtectedRoute } from './components/auth/ProtectedRoute';
+import { AdminRouteGuard } from './components/auth/AdminRouteGuard';
+import { CourierRouteGuard } from './components/auth/CourierRouteGuard';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 // Pages
@@ -28,7 +29,7 @@ import { CourierOrdersPage } from './pages/courier/CourierOrdersPage';
 import { CourierOrderDetailPage } from './pages/courier/CourierOrderDetailPage';
 
 const AppRouter: React.FC = () => {
-  const { session, loading } = useAuth();
+  const { adminSession, courierSession, loading } = useAuth();
   const [currentPath, setCurrentPath] = useState<string>(() => {
     return window.location.pathname || '/';
   });
@@ -47,18 +48,19 @@ const AppRouter: React.FC = () => {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // When session loads, intelligently route authenticated users if on login/courier-login
+  // Isolated redirect for each login screen
   useEffect(() => {
-    if (!loading && session) {
-      if (currentPath === '/login' || currentPath === '/courier-login') {
-        if (session.profile.role === 'admin') {
-          navigate('/dashboard');
-        } else if (session.profile.role === 'courier') {
-          navigate('/courier/dashboard');
-        }
+    if (!loading) {
+      const isAdminLogin = currentPath === '/login' || currentPath === '/login/admin' || currentPath === '/admin-login';
+      const isCourierLogin = currentPath === '/login/courier' || currentPath === '/courier-login';
+
+      if (isAdminLogin && adminSession && adminSession.profile.role === 'admin') {
+        navigate('/admin/dashboard');
+      } else if (isCourierLogin && courierSession && courierSession.profile.role === 'courier') {
+        navigate('/courier/dashboard');
       }
     }
-  }, [session, loading]);
+  }, [adminSession, courierSession, loading, currentPath]);
 
   if (loading) {
     return (
@@ -71,7 +73,7 @@ const AppRouter: React.FC = () => {
     );
   }
 
-  // Public Layouts
+  // 1. Public Customer Tracking Pages
   if (currentPath.startsWith('/s/') || currentPath.startsWith('/track/')) {
     const token = currentPath.replace(/^\/(s|track)\//, '').split('?')[0];
     return <CustomerShipmentPage token={token} navigate={navigate} />;
@@ -79,23 +81,27 @@ const AppRouter: React.FC = () => {
   if (currentPath === '/s' || currentPath === '/track') {
     return <CustomerShipmentPage token="" navigate={navigate} />;
   }
+
+  // 2. Landing & Registration Pages
   if (currentPath === '/' || currentPath === '') {
     return <LandingPage navigate={navigate} />;
   }
   if (currentPath === '/register' || currentPath === '/register-company') {
     return <RegisterCompanyPage navigate={navigate} />;
   }
-  if (currentPath === '/login' || currentPath === '/admin-login') {
-    return <AdminLoginPage navigate={navigate} />;
-  }
-  if (currentPath === '/courier-login') {
-    return <CourierLoginPage navigate={navigate} />;
-  }
   if (currentPath === '/forgot-password') {
     return <ForgotPasswordPage navigate={navigate} />;
   }
 
-  // App Layout with Header and Sidebar for authenticated users
+  // 3. Dedicated Login Pages
+  if (currentPath === '/login' || currentPath === '/login/admin' || currentPath === '/admin-login') {
+    return <AdminLoginPage navigate={navigate} />;
+  }
+  if (currentPath === '/login/courier' || currentPath === '/courier-login') {
+    return <CourierLoginPage navigate={navigate} />;
+  }
+
+  // 4. Authenticated Application Layout with Header & Sidebar
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <Header navigate={navigate} currentPath={currentPath} />
@@ -109,87 +115,87 @@ const AppRouter: React.FC = () => {
 
         {/* Dynamic Main Workspace Content */}
         <main className="flex-1 min-w-0">
-          {/* Admin Routes */}
+          {/* Admin Routes with Strict AdminRouteGuard */}
           {(currentPath === '/dashboard' || currentPath === '/admin/dashboard') && (
-            <ProtectedRoute requiredRole="admin" navigate={navigate}>
+            <AdminRouteGuard navigate={navigate}>
               <AdminDashboardPage navigate={navigate} />
-            </ProtectedRoute>
+            </AdminRouteGuard>
           )}
 
           {currentPath === '/merchants' && (
-            <ProtectedRoute requiredRole="admin" navigate={navigate}>
+            <AdminRouteGuard navigate={navigate}>
               <MerchantsPage />
-            </ProtectedRoute>
+            </AdminRouteGuard>
           )}
 
           {currentPath === '/couriers' && (
-            <ProtectedRoute requiredRole="admin" navigate={navigate}>
+            <AdminRouteGuard navigate={navigate}>
               <CouriersPage />
-            </ProtectedRoute>
+            </AdminRouteGuard>
           )}
 
           {currentPath === '/orders' && (
-            <ProtectedRoute requiredRole="admin" navigate={navigate}>
+            <AdminRouteGuard navigate={navigate}>
               <OrdersFoundationPage />
-            </ProtectedRoute>
+            </AdminRouteGuard>
           )}
 
           {(currentPath === '/collections' || currentPath === '/admin/collections') && (
-            <ProtectedRoute requiredRole="admin" navigate={navigate}>
+            <AdminRouteGuard navigate={navigate}>
               <CollectionsPage navigate={navigate} />
-            </ProtectedRoute>
+            </AdminRouteGuard>
           )}
 
           {currentPath === '/returns' && (
-            <ProtectedRoute requiredRole="admin" navigate={navigate}>
+            <AdminRouteGuard navigate={navigate}>
               <ReturnsPage />
-            </ProtectedRoute>
+            </AdminRouteGuard>
           )}
 
           {currentPath === '/reports' && (
-            <ProtectedRoute requiredRole="admin" navigate={navigate}>
+            <AdminRouteGuard navigate={navigate}>
               <ReportsPage />
-            </ProtectedRoute>
+            </AdminRouteGuard>
           )}
 
           {currentPath === '/activity' && (
-            <ProtectedRoute requiredRole="admin" navigate={navigate}>
+            <AdminRouteGuard navigate={navigate}>
               <ActivityLogPage navigate={navigate} />
-            </ProtectedRoute>
+            </AdminRouteGuard>
           )}
 
           {currentPath === '/settings' && (
-            <ProtectedRoute requiredRole="admin" navigate={navigate}>
+            <AdminRouteGuard navigate={navigate}>
               <SettingsPage />
-            </ProtectedRoute>
+            </AdminRouteGuard>
           )}
 
-          {/* Courier Routes */}
+          {/* Courier Routes with Strict CourierRouteGuard */}
           {currentPath === '/courier/dashboard' && (
-            <ProtectedRoute requiredRole="courier" navigate={navigate}>
+            <CourierRouteGuard navigate={navigate}>
               <CourierDashboardPage navigate={navigate} />
-            </ProtectedRoute>
+            </CourierRouteGuard>
           )}
 
           {currentPath === '/courier/orders' && (
-            <ProtectedRoute requiredRole="courier" navigate={navigate}>
+            <CourierRouteGuard navigate={navigate}>
               <CourierOrdersPage navigate={navigate} />
-            </ProtectedRoute>
+            </CourierRouteGuard>
           )}
 
           {currentPath === '/courier/returns' && (
-            <ProtectedRoute requiredRole="courier" navigate={navigate}>
+            <CourierRouteGuard navigate={navigate}>
               <ReturnsPage />
-            </ProtectedRoute>
+            </CourierRouteGuard>
           )}
 
           {currentPath.startsWith('/courier/orders/') && (
-            <ProtectedRoute requiredRole="courier" navigate={navigate}>
+            <CourierRouteGuard navigate={navigate}>
               <CourierOrderDetailPage 
                 orderId={currentPath.replace('/courier/orders/', '').split('?')[0]} 
                 navigate={navigate} 
               />
-            </ProtectedRoute>
+            </CourierRouteGuard>
           )}
         </main>
 

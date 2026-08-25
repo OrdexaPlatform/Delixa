@@ -286,7 +286,10 @@ export const CourierDashboardPage: React.FC<CourierDashboardPageProps> = ({ navi
           <div className="flex items-center gap-2 self-end sm:self-center">
             <button
               id="courier-logout-btn"
-              onClick={logout}
+              onClick={async () => {
+                await logout('courier');
+                navigate('/login/courier');
+              }}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl backdrop-blur-sm border border-white/15 transition-colors cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
