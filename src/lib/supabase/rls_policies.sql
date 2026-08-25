@@ -52,7 +52,7 @@ AS $$
 $$;
 
 -- ==============================================================================
--- AUTOMATIC COMPANY & ADMIN PROFILE PROVISIONING TRIGGER
+-- AUTOMATIC COMPANY & ADMIN/COURIER PROFILE PROVISIONING TRIGGER
 -- ==============================================================================
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger
@@ -61,14 +61,40 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  new_company_id UUID;
+  user_role_val TEXT;
+  existing_company_id UUID;
   user_full_name TEXT;
   user_phone TEXT;
   user_company_name TEXT;
   user_address TEXT;
+  new_company_id UUID;
 BEGIN
-  user_full_name := COALESCE(new.raw_user_meta_data->>'full_name', 'مدير النظام');
+  user_role_val := COALESCE(new.raw_user_meta_data->>'role', 'admin');
+  user_full_name := COALESCE(new.raw_user_meta_data->>'full_name', 'مستخدم جديد');
   user_phone := COALESCE(new.raw_user_meta_data->>'phone', '');
+
+  -- IF USER IS A COURIER:
+  IF user_role_val = 'courier' THEN
+    IF (new.raw_user_meta_data->>'company_id') IS NOT NULL THEN
+      existing_company_id := (new.raw_user_meta_data->>'company_id')::uuid;
+      
+      -- Insert or update profile for courier
+      INSERT INTO public.profiles (auth_user_id, company_id, full_name, phone, role)
+      VALUES (
+        new.id,
+        existing_company_id,
+        user_full_name,
+        user_phone,
+        'courier'
+      )
+      ON CONFLICT (auth_user_id) DO UPDATE 
+      SET full_name = EXCLUDED.full_name,
+          phone = EXCLUDED.phone;
+    END IF;
+    RETURN new;
+  END IF;
+
+  -- IF USER IS AN ADMIN (NEW COMPANY REGISTRATION):
   user_company_name := COALESCE(new.raw_user_meta_data->>'company_name', 'شركة شحن جديدة');
   user_address := COALESCE(new.raw_user_meta_data->>'address', 'جمهورية مصر العربية');
 
@@ -91,7 +117,11 @@ BEGIN
     user_full_name,
     user_phone,
     'admin'
-  );
+  )
+  ON CONFLICT (auth_user_id) DO UPDATE
+  SET company_id = new_company_id,
+      full_name = EXCLUDED.full_name,
+      phone = EXCLUDED.phone;
 
   RETURN new;
 END;

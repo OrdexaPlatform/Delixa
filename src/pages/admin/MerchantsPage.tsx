@@ -503,7 +503,14 @@ export const MerchantsPage: React.FC = () => {
                     <Store className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="font-extrabold text-sm text-slate-900">{currentMerchant.store_name}</h3>
+                    <h3 className="font-extrabold text-sm text-slate-900 flex items-center gap-2">
+                      <span>{currentMerchant.store_name}</span>
+                      {currentMerchant.brand_name && (
+                        <span className="px-2 py-0.5 text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200 rounded-md">
+                          {currentMerchant.brand_name}
+                        </span>
+                      )}
+                    </h3>
                     <p className="text-[11px] text-slate-500">{t.ownerName}: {currentMerchant.owner_name}</p>
                   </div>
                 </div>
@@ -545,7 +552,16 @@ export const MerchantsPage: React.FC = () => {
                   </div>
                 )}
 
-                <div className="flex items-start gap-2 col-span-2">
+                {currentMerchant.email && (
+                  <div className="flex items-center gap-2 text-slate-700">
+                    <Mail className="w-3.5 h-3.5 text-blue-600" />
+                    <a href={`mailto:${currentMerchant.email}`} className="hover:underline text-slate-900 font-medium truncate">
+                      {currentMerchant.email}
+                    </a>
+                  </div>
+                )}
+
+                <div className="flex items-start gap-2 col-span-1 sm:col-span-2">
                   <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
                   <span>{currentMerchant.address}</span>
                 </div>

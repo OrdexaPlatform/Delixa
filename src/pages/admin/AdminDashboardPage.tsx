@@ -202,12 +202,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
           </div>
           <div className="mt-3 flex items-baseline justify-between">
             <span className="text-2xl font-black text-slate-900 tracking-tight">
-              {metrics.outstandingCourierCollections.toLocaleString()}
+              {Number(metrics.outstandingCourierCollections ?? metrics.outstandingCollections ?? 0).toLocaleString()}
             </span>
             <span className="text-xs font-bold text-slate-500">{t.currency}</span>
           </div>
           <div className="mt-2 text-xs text-amber-800 font-semibold flex items-center justify-between">
-            <span>{metrics.couriersWithOutstandingCount} {t.couriersWithOutstanding || 'مندوب بحوزتهم نقدية'}</span>
+            <span>{metrics.couriersWithOutstandingCount ?? metrics.couriersWithDebtCount ?? 0} {t.couriersWithOutstanding || 'مندوب بحوزتهم نقدية'}</span>
             <span className="text-blue-600 group-hover:underline text-[11px]">تسوية &larr;</span>
           </div>
         </div>
@@ -226,15 +226,15 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
           </div>
           <div className="mt-3 flex items-baseline justify-between">
             <span className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-              {metrics.totalOrders}
+              {metrics.totalOrders ?? 0}
             </span>
             <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-              {metrics.deliverySuccessRate}% تسليم
+              {metrics.deliverySuccessRate ?? 100}% تسليم
             </span>
           </div>
           <div className="mt-2 text-xs text-slate-500 flex items-center justify-between">
-            <span>مسلّمة: {metrics.deliveredOrders}</span>
-            <span>متعثرة: {metrics.failedOrders}</span>
+            <span>مسلّمة: {metrics.deliveredOrders ?? 0}</span>
+            <span>متعثرة: {metrics.failedOrders ?? 0}</span>
           </div>
         </div>
 
@@ -252,12 +252,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
           </div>
           <div className="mt-3 flex items-baseline justify-between">
             <span className="text-2xl font-extrabold text-emerald-700 tracking-tight">
-              {metrics.deliveredCodAmount.toLocaleString()}
+              {Number(metrics.deliveredCodAmount ?? metrics.totalCodDelivered ?? 0).toLocaleString()}
               <span className="text-xs font-bold text-slate-500 ms-1">{t.currency}</span>
             </span>
           </div>
           <div className="mt-2 text-xs text-slate-500 flex items-center justify-between">
-            <span>إجمالي مستهدف: {metrics.totalCodAmount.toLocaleString()} {t.currency}</span>
+            <span>إجمالي مستهدف: {Number(metrics.totalCodAmount ?? 0).toLocaleString()} {t.currency}</span>
           </div>
         </div>
 
@@ -275,15 +275,15 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
           </div>
           <div className="mt-3 flex items-baseline justify-between">
             <span className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-              {metrics.confirmationMetrics.confirmationRate}%
+              {metrics.confirmationMetrics?.confirmationRate ?? 0}%
             </span>
             <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-              {metrics.confirmationMetrics.confirmed} مؤكدة
+              {metrics.confirmationMetrics?.confirmed ?? 0} مؤكدة
             </span>
           </div>
           <div className="mt-2 text-xs text-slate-500 flex items-center justify-between">
-            <span>تأجيل: {metrics.confirmationMetrics.reschedule_requested}</span>
-            <span>إلغاء: {metrics.confirmationMetrics.cancelled}</span>
+            <span>تأجيل: {metrics.confirmationMetrics?.reschedule_requested ?? metrics.confirmationMetrics?.rescheduled ?? 0}</span>
+            <span>إلغاء: {metrics.confirmationMetrics?.cancelled ?? 0}</span>
           </div>
         </div>
 
@@ -301,16 +301,16 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
           </div>
           <div className="mt-3 flex items-baseline justify-between">
             <span className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-              {metrics.totalReturns}
+              {metrics.totalReturns ?? 0}
               <span className="text-xs font-medium text-slate-500 ms-1">مرتجع</span>
             </span>
             <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
-              {metrics.activeReturns} معلقة
+              {metrics.activeReturns ?? 0} معلقة
             </span>
           </div>
           <div className="mt-2 text-xs text-slate-500 flex items-center justify-between">
-            <span>المناديب: {metrics.activeCouriers} / {metrics.totalCouriers}</span>
-            <span>متاجر: {metrics.activeMerchants}</span>
+            <span>المناديب: {metrics.activeCouriers ?? 0} / {metrics.totalCouriers ?? 0}</span>
+            <span>متاجر: {metrics.activeMerchants ?? 0}</span>
           </div>
         </div>
 
@@ -448,7 +448,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {metrics.courierPerformance.map(cp => (
+                  {(metrics.courierPerformance || []).map(cp => (
                     <tr key={cp.id} className="hover:bg-slate-50 transition-colors">
                       <td className="py-3">
                         <div className="font-bold text-slate-900 flex items-center gap-1.5">
@@ -460,29 +460,29 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
                         <span className="text-[10px] text-slate-400 font-mono">{cp.phone}</span>
                       </td>
                       <td className="py-3 text-center font-bold text-slate-700">
-                        {cp.assignedCount}
+                        {cp.assignedCount ?? cp.assignedOrders ?? 0}
                       </td>
                       <td className="py-3 text-center font-bold text-emerald-600">
-                        {cp.deliveredCount}
+                        {cp.deliveredCount ?? cp.deliveredOrders ?? 0}
                       </td>
                       <td className="py-3 text-center font-bold text-rose-600">
-                        {cp.failedCount}
+                        {cp.failedCount ?? cp.failedOrders ?? 0}
                       </td>
                       <td className="py-3 text-center">
                         <span
                           className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            cp.successRate >= 80
+                            (cp.successRate ?? 0) >= 80
                               ? 'bg-emerald-100 text-emerald-800'
-                              : cp.successRate >= 50
+                              : (cp.successRate ?? 0) >= 50
                               ? 'bg-amber-100 text-amber-800'
                               : 'bg-slate-100 text-slate-700'
                           }`}
                         >
-                          {cp.successRate}%
+                          {cp.successRate ?? 0}%
                         </span>
                       </td>
                       <td className="py-3 text-end font-bold text-slate-900 font-mono">
-                        {cp.collectedCod.toLocaleString()} {t.currency}
+                        {Number(cp.collectedCod ?? cp.totalCod ?? 0).toLocaleString()} {t.currency}
                       </td>
                     </tr>
                   ))}
@@ -513,13 +513,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
             </button>
           </div>
 
-          {metrics.merchantPerformance.length === 0 ? (
+          {(metrics.merchantPerformance || []).length === 0 ? (
             <div className="text-center py-8 text-xs text-slate-400">
               لا توجد متاجر نشطة بعد
             </div>
           ) : (
             <div className="space-y-3">
-              {metrics.merchantPerformance.slice(0, 5).map(mp => (
+              {(metrics.merchantPerformance || []).slice(0, 5).map(mp => (
                 <div
                   key={mp.id}
                   className="p-3 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between text-xs hover:bg-slate-100/70 transition-colors"
@@ -527,18 +527,18 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
                   <div className="min-w-0 flex-1 me-2">
                     <h4 className="font-bold text-slate-900 truncate">{mp.name}</h4>
                     <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5">
-                      <span>{mp.totalOrders} شحنة</span>
+                      <span>{mp.totalOrders ?? 0} شحنة</span>
                       <span>•</span>
-                      <span className="text-emerald-600 font-semibold">{mp.deliveredOrders} مسلّمة</span>
+                      <span className="text-emerald-600 font-semibold">{mp.deliveredOrders ?? 0} مسلّمة</span>
                     </div>
                   </div>
 
                   <div className="text-end shrink-0">
                     <span className="font-bold text-slate-900 block font-mono text-[11px]">
-                      {mp.totalCod.toLocaleString()} {t.currency}
+                      {Number(mp.totalCod ?? 0).toLocaleString()} {t.currency}
                     </span>
                     <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 inline-block mt-0.5">
-                      {mp.successRate}% نجاح
+                      {mp.successRate ?? (mp.totalOrders ? Math.round(((mp.deliveredOrders || 0) / mp.totalOrders) * 100) : 0)}% نجاح
                     </span>
                   </div>
                 </div>

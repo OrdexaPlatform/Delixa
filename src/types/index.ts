@@ -324,7 +324,10 @@ export interface CourierCollectionSummary {
   last_settlement_date: string | null;
 }
 
+export type SessionMode = 'demo' | 'production';
+
 export interface AuthSession {
+  mode: SessionMode;
   user: {
     id: string;
     email: string;

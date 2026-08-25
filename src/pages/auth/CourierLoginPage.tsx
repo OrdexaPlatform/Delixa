@@ -2,20 +2,21 @@ import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
-import { Truck, BadgeCheck, Lock, ArrowLeft, ArrowRight, Info, Building2 } from 'lucide-react';
+import { Truck, BadgeCheck, Lock, ArrowLeft, ArrowRight, Info, Building2, Sparkles } from 'lucide-react';
 
 interface CourierLoginPageProps {
   navigate: (path: string) => void;
 }
 
 export const CourierLoginPage: React.FC<CourierLoginPageProps> = ({ navigate }) => {
-  const { loginCourier } = useAuth();
+  const { loginCourier, loginDemoUser } = useAuth();
   const { t, isRTL } = useLanguage();
   const { showToast } = useToast();
 
-  const [employeeId, setEmployeeId] = useState('CR-101');
-  const [password, setPassword] = useState('CR101K');
+  const [employeeId, setEmployeeId] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const ArrowIcon = isRTL ? ArrowLeft : ArrowRight;
@@ -39,6 +40,19 @@ export const CourierLoginPage: React.FC<CourierLoginPageProps> = ({ navigate }) 
     } else {
       setError(res.error || 'كود الموظف أو كلمة المرور غير صحيحة');
       showToast('error', 'فشل تسجيل الدخول', res.error);
+    }
+  };
+
+  const handleInstantDemoCourier = async (empId: string, name: string) => {
+    setError(null);
+    setDemoLoading(empId);
+    const res = await loginDemoUser('courier', empId);
+    setDemoLoading(null);
+    if (res.success) {
+      showToast('success', `مرحباً ${name}!`, `تم فتح حساب المندوب التجريبي (${empId})`);
+      navigate('/courier/dashboard');
+    } else {
+      setError(res.error || 'فشل فتح حساب المندوب التجريبي');
     }
   };
 
@@ -133,7 +147,7 @@ export const CourierLoginPage: React.FC<CourierLoginPageProps> = ({ navigate }) 
             <button
               id="courier-login-submit"
               type="submit"
-              disabled={loading}
+              disabled={loading || Boolean(demoLoading)}
               className="w-full mt-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
             >
               {loading ? (
@@ -149,35 +163,55 @@ export const CourierLoginPage: React.FC<CourierLoginPageProps> = ({ navigate }) 
           </form>
 
           {/* Quick Demo Test Buttons for Couriers */}
-          <div className="mt-6 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
-            <div className="font-bold text-slate-700 mb-2">حسابات مناديب جاهزة للتجربة:</div>
+          <div className="mt-6 p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+            <div className="font-bold text-slate-800 mb-2 flex items-center gap-1">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+              <span>حسابات مناديب جاهزة للتجربة (دخول فوري):</span>
+            </div>
             <div className="space-y-2 text-[11px]">
+              
+              {/* Courier 1 */}
               <div 
-                onClick={() => {
-                  setEmployeeId('CR-101');
-                  setPassword('CR101K');
-                }}
-                className="p-2 rounded-xl bg-white border border-slate-200 cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/30 transition-all flex items-center justify-between"
+                onClick={() => handleInstantDemoCourier('CR-101', 'كريم عادل')}
+                className="p-2.5 rounded-xl bg-white border border-slate-200 cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/40 transition-all flex items-center justify-between group"
               >
                 <div>
-                  <span className="font-bold text-slate-800 block">كريم (مدينة نصر ومصر الجديدة)</span>
-                  <span className="text-[10px] text-slate-500">كود: <strong className="font-mono text-emerald-700">CR-101</strong> | PIN: <strong className="font-mono text-slate-700">CR101K</strong></span>
+                  <span className="font-bold text-slate-800 group-hover:text-emerald-700 block">كريم عادل (المعادي ودار السلام)</span>
+                  <span className="text-[10px] text-slate-500">كود: <strong className="font-mono text-emerald-700">CR-101</strong></span>
                 </div>
-                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-bold">تجربة</span>
+                <span className="px-2 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-bold">
+                  {demoLoading === 'CR-101' ? 'جاري...' : 'دخول فوري'}
+                </span>
               </div>
+
+              {/* Courier 2 */}
               <div 
-                onClick={() => {
-                  setEmployeeId('CR-102');
-                  setPassword('CR102M');
-                }}
-                className="p-2 rounded-xl bg-white border border-slate-200 cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/30 transition-all flex items-center justify-between"
+                onClick={() => handleInstantDemoCourier('CR-102', 'محمود حسن')}
+                className="p-2.5 rounded-xl bg-white border border-slate-200 cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/40 transition-all flex items-center justify-between group"
               >
                 <div>
-                  <span className="font-bold text-slate-800 block">مصطفى (المعادي وحلوان)</span>
-                  <span className="text-[10px] text-slate-500">كود: <strong className="font-mono text-emerald-700">CR-102</strong> | PIN: <strong className="font-mono text-slate-700">CR102M</strong></span>
+                  <span className="font-bold text-slate-800 group-hover:text-emerald-700 block">محمود حسن (مدينة نصر والتجمع)</span>
+                  <span className="text-[10px] text-slate-500">كود: <strong className="font-mono text-emerald-700">CR-102</strong></span>
                 </div>
-                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-bold">تجربة</span>
+                <span className="px-2 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-bold">
+                  {demoLoading === 'CR-102' ? 'جاري...' : 'دخول فوري'}
+                </span>
               </div>
+
+              {/* Courier 3 */}
+              <div 
+                onClick={() => handleInstantDemoCourier('CR-103', 'أحمد سامي')}
+                className="p-2.5 rounded-xl bg-white border border-slate-200 cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/40 transition-all flex items-center justify-between group"
+              >
+                <div>
+                  <span className="font-bold text-slate-800 group-hover:text-emerald-700 block">أحمد سامي (الجيزة والدقي)</span>
+                  <span className="text-[10px] text-slate-500">كود: <strong className="font-mono text-emerald-700">CR-103</strong></span>
+                </div>
+                <span className="px-2 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-bold">
+                  {demoLoading === 'CR-103' ? 'جاري...' : 'دخول فوري'}
+                </span>
+              </div>
+
             </div>
           </div>
 

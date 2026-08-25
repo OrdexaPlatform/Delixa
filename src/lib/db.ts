@@ -1,4 +1,5 @@
-import { supabase, isSupabaseConfigured } from './supabase';
+import { createClient } from '@supabase/supabase-js';
+import { supabase, isSupabaseConfigured, supabaseUrl, supabaseAnonKey } from './supabase';
 import { 
   Company, 
   Profile, 
@@ -18,9 +19,30 @@ import {
   CustomerResponseStatus,
   ReturnStatus,
   ReturnReason,
-  DeliveryFailureReason
+  DeliveryFailureReason,
+  SessionMode
 } from '../types';
 import { hashPassword, verifyPassword, normalizeEmployeeId } from './crypto';
+import { demoDb, DEMO_COMPANY_ID } from './demoDb';
+
+// Session Mode Control for clean data separation
+let currentSessionMode: SessionMode = 'production';
+
+export function setDatabaseSessionMode(mode: SessionMode) {
+  currentSessionMode = mode;
+}
+
+export function getDatabaseSessionMode(): SessionMode {
+  return currentSessionMode;
+}
+
+export function isDemoScope(companyId?: string | null): boolean {
+  if (currentSessionMode === 'demo') return true;
+  if (companyId && (companyId === DEMO_COMPANY_ID || companyId.startsWith('demo-'))) return true;
+  return false;
+}
+
+export { DEMO_COMPANY_ID, demoDb };
 
 export const FAILURE_REASONS = [
   { id: 'customer_unavailable', label: 'العميل غير متاح / لم يتم الرد', enLabel: 'Customer unavailable / No answer' },
@@ -119,8 +141,21 @@ export function subscribeOrderUpdates(callback: (orderId?: string) => void): () 
   };
 }
 
-// DATABASE LAYER IMPLEMENTATION
-export const db = {
+// Format merchant rows from database
+function formatMerchantRow(m: any): Merchant {
+  if (!m) return m;
+  return {
+    ...m,
+    brand_name: m.brand_name || undefined,
+    whatsapp: m.whatsapp || undefined,
+    email: m.email || undefined,
+    logo_url: m.logo_url || undefined,
+    notes: m.notes || undefined,
+  } as Merchant;
+}
+
+// DATABASE LAYER IMPLEMENTATION (SUPABASE PRODUCTION)
+const supabaseDb = {
   // ==========================================
   // COMPANIES
   // ==========================================
@@ -211,9 +246,13 @@ export const db = {
     return data as Profile;
   },
 
-  async createProfile(data: { auth_user_id?: string; company_id: string; full_name: string; phone: string; role: 'admin' | 'courier' }): Promise<Profile> {
+  async createProfile(data: { auth_user_id: string; company_id: string; full_name: string; phone: string; role: 'admin' | 'courier' }): Promise<Profile> {
+    if (!data.auth_user_id) {
+      throw new Error('معرف المستخدم auth_user_id مطلوب لإنشاء الملف الشخصي');
+    }
+
     const newProfile = {
-      auth_user_id: data.auth_user_id || null,
+      auth_user_id: data.auth_user_id,
       company_id: data.company_id,
       full_name: data.full_name.trim(),
       phone: data.phone.trim(),
@@ -310,16 +349,98 @@ export const db = {
       throw new Error(`كود المندوب (${data.employee_id}) مسجل مسبقاً في هذه الشركة`);
     }
 
-    // 1. Create Profile
-    const profile = await this.createProfile({
-      company_id: companyId,
-      full_name: data.full_name.trim(),
-      phone: data.phone.trim(),
-      role: 'courier',
+    const courierPassword = data.password ? data.password.trim() : '123456';
+    const pwdHash = hashPassword(courierPassword);
+
+    // Option 1: Try creating via secure server-side endpoint if available
+    try {
+      const { data: sessData } = await supabase.auth.getSession();
+      const token = sessData?.session?.access_token;
+      if (token && typeof window !== 'undefined') {
+        const res = await fetch('/api/admin/create-courier', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            employee_id: cleanEmpId,
+            full_name: data.full_name.trim(),
+            phone: data.phone.trim(),
+            area: data.area.trim(),
+            password: courierPassword,
+            status: data.status || 'active',
+          }),
+        });
+
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.courier) {
+            notifyOrderUpdated();
+            return json.courier as Courier;
+          }
+        }
+      }
+    } catch (serverErr) {
+      console.warn('Backend create-courier endpoint notice (using direct Supabase Auth client):', serverErr);
+    }
+
+    // Option 2: Direct Supabase Auth user registration with isolated client
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error('إعدادات Supabase غير متوفرة لإنشاء حساب المندوب');
+    }
+
+    const unpersistedAuthClient = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
     });
 
-    const pwdHash = data.password ? hashPassword(data.password) : hashPassword('123456');
+    const cleanCompanyFragment = companyId.replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase();
+    const cleanEmpFragment = cleanEmpId.replace(/[^a-z0-9]/gi, '').toLowerCase();
+    const courierEmail = `${cleanEmpFragment}.${cleanCompanyFragment}@courier.delixa.app`;
 
+    const { data: authData, error: authError } = await unpersistedAuthClient.auth.signUp({
+      email: courierEmail,
+      password: courierPassword,
+      options: {
+        data: {
+          role: 'courier',
+          company_id: companyId,
+          employee_id: cleanEmpId,
+          full_name: data.full_name.trim(),
+          phone: data.phone.trim(),
+        },
+      },
+    });
+
+    if (authError && !authData?.user) {
+      // If user already exists in auth
+      if (!authError.message?.includes('already registered')) {
+        throw new Error(authError.message || 'فشل إنشاء حساب المصادقة للمندوب في Supabase Auth');
+      }
+    }
+
+    const authUserId = authData?.user?.id;
+    if (!authUserId) {
+      throw new Error('تعذر الحصول على معرف المستخدم الحقيقي من Supabase Auth');
+    }
+
+    // 2. Fetch or create Profile with real auth_user_id
+    let profile = await this.getProfileByAuthUserId(authUserId);
+    if (!profile) {
+      profile = await this.createProfile({
+        auth_user_id: authUserId,
+        company_id: companyId,
+        full_name: data.full_name.trim(),
+        phone: data.phone.trim(),
+        role: 'courier',
+      });
+    }
+
+    // 3. Create Courier record linking to profile_id and company_id
     const newCourier = {
       company_id: companyId,
       profile_id: profile.id,
@@ -396,58 +517,190 @@ export const db = {
   // ==========================================
   async getMerchants(companyId: string): Promise<Merchant[]> {
     if (!companyId) return [];
-    const { data, error } = await supabase.from('merchants').select('*').eq('company_id', companyId).order('created_at', { ascending: false });
+    const { data, error } = await supabase
+      .from('merchants')
+      .select('*')
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false });
+
     if (error) {
       console.error('Error fetching merchants:', error);
       return [];
     }
-    return (data || []) as Merchant[];
+    return (data || []).map(formatMerchantRow);
   },
 
   async getMerchantById(companyId: string, id: string): Promise<Merchant | null> {
     if (!id) return null;
-    const { data, error } = await supabase.from('merchants').select('*').eq('id', id).eq('company_id', companyId).single();
-    if (error) return null;
-    return data as Merchant;
+    const { data, error } = await supabase
+      .from('merchants')
+      .select('*')
+      .eq('id', id)
+      .eq('company_id', companyId)
+      .single();
+
+    if (error || !data) return null;
+    return formatMerchantRow(data);
   },
 
   async createMerchant(companyId: string, data: { store_name: string; owner_name: string; brand_name?: string; phone: string; whatsapp?: string; email?: string; address: string; logo_url?: string; notes?: string; status?: 'active' | 'inactive' }): Promise<Merchant> {
     if (!companyId) throw new Error('معرف الشركة مطلوب');
 
-    const newMerchant = {
+    const payload = {
       company_id: companyId,
       store_name: data.store_name.trim(),
       owner_name: data.owner_name.trim(),
-      brand_name: data.brand_name?.trim() || null,
+      brand_name: typeof data.brand_name === 'string' && data.brand_name.trim() ? data.brand_name.trim() : null,
       phone: data.phone.trim(),
-      whatsapp: data.whatsapp?.trim() || null,
-      email: data.email?.trim() || null,
+      whatsapp: typeof data.whatsapp === 'string' && data.whatsapp.trim() ? data.whatsapp.trim() : null,
+      email: typeof data.email === 'string' && data.email.trim() ? data.email.trim() : null,
       address: data.address.trim(),
-      logo_url: data.logo_url || null,
-      notes: data.notes?.trim() || null,
-      status: data.status || 'active',
+      logo_url: typeof data.logo_url === 'string' && data.logo_url.trim() ? data.logo_url.trim() : null,
+      notes: typeof data.notes === 'string' && data.notes.trim() ? data.notes.trim() : null,
+      status: data.status === 'inactive' ? 'inactive' : 'active',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    
+    // First, try server-side creation route if token exists
+    const sessionStr = typeof window !== 'undefined' ? localStorage.getItem('delixa_auth_session') : null;
+    let token = '';
+    try {
+      if (sessionStr) {
+        const parsed = JSON.parse(sessionStr);
+        token = parsed?.token || '';
+      }
+    } catch (_) {}
 
-    const { data: created, error } = await supabase.from('merchants').insert([newMerchant]).select().single();
-    if (error) throw new Error(error.message || 'فشل حفظ بيانات التاجر');
+    // Check supabase active session token as well
+    if (!token && isSupabaseConfigured) {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.access_token) {
+          token = sessionData.session.access_token;
+        }
+      } catch (_) {}
+    }
+
+    if (token) {
+      try {
+        const apiRes = await fetch('/api/admin/create-merchant', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        });
+        const apiJson = await apiRes.json();
+        if (apiJson.success && apiJson.merchant) {
+          notifyOrderUpdated();
+          return formatMerchantRow(apiJson.merchant);
+        } else if (apiJson.error) {
+          throw new Error(apiJson.error);
+        }
+      } catch (e: any) {
+        if (e.message && !e.message.includes('fetch')) {
+          throw e;
+        }
+        console.warn('Server API create-merchant attempt passed to client supabase directly:', e);
+      }
+    }
+
+    // Direct Supabase Client Creation
+    const { data: created, error } = await supabase
+      .from('merchants')
+      .insert([payload])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating merchant in Supabase:', error);
+      throw new Error(error.message || 'فشل حفظ بيانات التاجر في قاعدة البيانات');
+    }
+
     notifyOrderUpdated();
-    return created as Merchant;
+    return formatMerchantRow(created);
   },
 
   async updateMerchant(companyId: string, id: string, data: Partial<Merchant>): Promise<Merchant | null> {
+    if (!companyId || !id) return null;
+
+    const raw = data || {};
+    const updates: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (raw.store_name !== undefined) updates.store_name = raw.store_name.trim();
+    if (raw.owner_name !== undefined) updates.owner_name = raw.owner_name.trim();
+    if (raw.brand_name !== undefined) updates.brand_name = typeof raw.brand_name === 'string' && raw.brand_name.trim() ? raw.brand_name.trim() : null;
+    if (raw.phone !== undefined) updates.phone = raw.phone.trim();
+    if (raw.whatsapp !== undefined) updates.whatsapp = typeof raw.whatsapp === 'string' && raw.whatsapp.trim() ? raw.whatsapp.trim() : null;
+    if (raw.email !== undefined) updates.email = typeof raw.email === 'string' && raw.email.trim() ? raw.email.trim() : null;
+    if (raw.address !== undefined) updates.address = raw.address.trim();
+    if (raw.logo_url !== undefined) updates.logo_url = typeof raw.logo_url === 'string' && raw.logo_url.trim() ? raw.logo_url.trim() : null;
+    if (raw.notes !== undefined) updates.notes = typeof raw.notes === 'string' && raw.notes.trim() ? raw.notes.trim() : null;
+    if (raw.status !== undefined) updates.status = raw.status === 'inactive' ? 'inactive' : 'active';
+
+    // First try server API if token is present
+    const sessionStr = typeof window !== 'undefined' ? localStorage.getItem('delixa_auth_session') : null;
+    let token = '';
+    try {
+      if (sessionStr) {
+        const parsed = JSON.parse(sessionStr);
+        token = parsed?.token || '';
+      }
+    } catch (_) {}
+
+    if (!token && isSupabaseConfigured) {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.access_token) {
+          token = sessionData.session.access_token;
+        }
+      } catch (_) {}
+    }
+
+    if (token) {
+      try {
+        const apiRes = await fetch(`/api/admin/update-merchant/${id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify(updates),
+        });
+        const apiJson = await apiRes.json();
+        if (apiJson.success && apiJson.merchant) {
+          notifyOrderUpdated();
+          return formatMerchantRow(apiJson.merchant);
+        } else if (apiJson.error) {
+          throw new Error(apiJson.error);
+        }
+      } catch (e: any) {
+        if (e.message && !e.message.includes('fetch')) {
+          throw e;
+        }
+        console.warn('Server API update-merchant attempt passed to client supabase directly:', e);
+      }
+    }
+
     const { data: updated, error } = await supabase
       .from('merchants')
-      .update({ ...data, updated_at: new Date().toISOString() })
+      .update(updates)
       .eq('id', id)
       .eq('company_id', companyId)
       .select()
       .single();
 
-    if (error) return null;
+    if (error) {
+      console.error('Error updating merchant in Supabase:', error);
+      throw new Error(error.message || 'فشل تحديث بيانات التاجر في قاعدة البيانات');
+    }
+
     notifyOrderUpdated();
-    return updated as Merchant;
+    return formatMerchantRow(updated);
   },
 
   async deleteMerchant(companyId: string, id: string): Promise<boolean> {
@@ -1626,10 +1879,14 @@ export const db = {
         area: c.area,
         status: c.status,
         assignedOrders: cOrders.length,
+        assignedCount: cOrders.length,
         deliveredOrders: cDelivered,
+        deliveredCount: cDelivered,
         failedOrders: cFailed,
+        failedCount: cFailed,
         successRate,
         totalCod: cCod,
+        collectedCod: cCod,
       };
     });
 
@@ -1637,13 +1894,15 @@ export const db = {
       const mOrders = orders.filter(o => o.merchant_id === m.id);
       const mDelivered = mOrders.filter(o => o.status === 'delivered').length;
       const mCod = mOrders.filter(o => o.status === 'delivered').reduce((sum, o) => sum + (Number(o.cod_amount) || 0), 0);
+      const successRate = mOrders.length > 0 ? Math.round((mDelivered / mOrders.length) * 100) : 0;
       return {
         id: m.id,
-        name: m.business_name,
+        name: m.store_name || m.owner_name || m.brand_name || 'متجر',
         phone: m.phone,
         totalOrders: mOrders.length,
         deliveredOrders: mDelivered,
         totalCod: mCod,
+        successRate,
       };
     });
 
@@ -1764,4 +2023,132 @@ export const db = {
       outstandingCash: summary?.current_outstanding_balance || 0,
     };
   },
+};
+
+// =========================================================================
+// ROUTING DB LAYER: STRICTLY SEPARATES DEMO VS PRODUCTION SESSIONS
+// =========================================================================
+export const db = {
+  // Companies
+  getCompanies: () => (currentSessionMode === 'demo' ? demoDb.getCompanies() : supabaseDb.getCompanies()),
+  getCompanyById: (id: string) => (isDemoScope(id) ? demoDb.getCompanyById(id) : supabaseDb.getCompanyById(id)),
+  createCompany: (data: any) => (currentSessionMode === 'demo' ? demoDb.createCompany(data) : supabaseDb.createCompany(data)),
+  updateCompany: (id: string, updates: any) => (isDemoScope(id) ? demoDb.updateCompany(id, updates) : supabaseDb.updateCompany(id, updates)),
+  updateCompanyProfile: (companyId: string, data: any) => (isDemoScope(companyId) ? demoDb.updateCompanyProfile(companyId, data) : supabaseDb.updateCompanyProfile(companyId, data)),
+
+  // Profiles
+  getProfiles: (companyId?: string) => (isDemoScope(companyId) ? demoDb.getProfiles(companyId) : supabaseDb.getProfiles(companyId)),
+  getProfileById: (id: string) => (isDemoScope(id) || id?.startsWith('demo-') ? demoDb.getProfileById(id) : supabaseDb.getProfileById(id)),
+  getProfileByAuthUserId: (authUserId: string) => (currentSessionMode === 'demo' || authUserId?.startsWith('demo-') ? demoDb.getProfileByAuthUserId(authUserId) : supabaseDb.getProfileByAuthUserId(authUserId)),
+  createProfile: (data: any) => (isDemoScope(data.company_id) ? demoDb.createProfile(data) : supabaseDb.createProfile(data)),
+  updateProfile: (id: string, updates: any) => (id?.startsWith('demo-') || currentSessionMode === 'demo' ? demoDb.updateProfile(id, updates) : supabaseDb.updateProfile(id, updates)),
+  updateAdminProfile: (companyId: string, profileId: string, data: any) => (isDemoScope(companyId) ? demoDb.updateAdminProfile(companyId, profileId, data) : supabaseDb.updateAdminProfile(companyId, profileId, data)),
+
+  // Couriers
+  getCouriers: (companyId: string) => (isDemoScope(companyId) ? demoDb.getCouriers(companyId) : supabaseDb.getCouriers(companyId)),
+  getCourierById: (companyId: string, id: string) => (isDemoScope(companyId) || id?.startsWith('demo-') ? demoDb.getCourierById(companyId, id) : supabaseDb.getCourierById(companyId, id)),
+  getCourierByEmployeeId: (employeeId: string) => (currentSessionMode === 'demo' ? demoDb.getCourierByEmployeeId(employeeId) : supabaseDb.getCourierByEmployeeId(employeeId)),
+  verifyCourierPassword: (courier: Courier, enteredPassword?: string) => supabaseDb.verifyCourierPassword(courier, enteredPassword),
+  createCourier: (companyId: string, data: any) => (isDemoScope(companyId) ? demoDb.createCourier(companyId, data) : supabaseDb.createCourier(companyId, data)),
+  updateCourier: (companyId: string, id: string, data: any) => (isDemoScope(companyId) ? demoDb.updateCourier(companyId, id, data) : supabaseDb.updateCourier(companyId, id, data)),
+  deleteCourier: (companyId: string, id: string) => (isDemoScope(companyId) ? demoDb.deleteCourier(companyId, id) : supabaseDb.deleteCourier(companyId, id)),
+  updateCourierSelfProfile: (companyId: string, courierId: string, data: any) => (isDemoScope(companyId) ? demoDb.updateCourierSelfProfile(companyId, courierId, data) : supabaseDb.updateCourierSelfProfile(companyId, courierId, data)),
+
+  // Merchants
+  getMerchants: (companyId: string) => (isDemoScope(companyId) ? demoDb.getMerchants(companyId) : supabaseDb.getMerchants(companyId)),
+  getMerchantById: (companyId: string, id: string) => (isDemoScope(companyId) || id?.startsWith('demo-') ? demoDb.getMerchantById(companyId, id) : supabaseDb.getMerchantById(companyId, id)),
+  createMerchant: (companyId: string, data: any) => (isDemoScope(companyId) ? demoDb.createMerchant(companyId, data) : supabaseDb.createMerchant(companyId, data)),
+  updateMerchant: (companyId: string, id: string, data: any) => (isDemoScope(companyId) ? demoDb.updateMerchant(companyId, id, data) : supabaseDb.updateMerchant(companyId, id, data)),
+  deleteMerchant: (companyId: string, id: string) => (isDemoScope(companyId) ? demoDb.deleteMerchant(companyId, id) : supabaseDb.deleteMerchant(companyId, id)),
+
+  // Orders
+  getNextOrderNumber: (companyId: string) => (isDemoScope(companyId) ? demoDb.getNextOrderNumber(companyId) : supabaseDb.getNextOrderNumber(companyId)),
+  getOrders: (companyId: string, courierId?: string | null, merchantId?: string | null) => (isDemoScope(companyId) ? demoDb.getOrders(companyId, courierId, merchantId) : supabaseDb.getOrders(companyId, courierId, merchantId)),
+  getOrderById: (companyId: string, id: string) => (isDemoScope(companyId) || id?.startsWith('demo-') ? demoDb.getOrderById(companyId, id) : supabaseDb.getOrderById(companyId, id)),
+  getOrderByToken: async (token: string) => {
+    const demo = await demoDb.getOrderByToken(token);
+    if (demo) return demo;
+    if (currentSessionMode === 'demo') return null;
+    return supabaseDb.getOrderByToken(token);
+  },
+  createOrder: (companyId: string, data: any) => (isDemoScope(companyId) ? demoDb.createOrder(companyId, data) : supabaseDb.createOrder(companyId, data)),
+  updateOrder: (companyId: string, id: string, data: any) => (isDemoScope(companyId) || id?.startsWith('demo-') ? demoDb.updateOrder(companyId, id, data) : supabaseDb.updateOrder(companyId, id, data)),
+  updateOrderStatus: (companyId: string, orderId: string, status: any, details?: any) => (isDemoScope(companyId) || orderId?.startsWith('demo-') ? demoDb.updateOrderStatus(companyId, orderId, status, details) : supabaseDb.updateOrderStatus(companyId, orderId, status, details)),
+  deleteOrder: (companyId: string, id: string) => (isDemoScope(companyId) || id?.startsWith('demo-') ? demoDb.deleteOrder(companyId, id) : supabaseDb.deleteOrder(companyId, id)),
+
+  // Customer Actions
+  recordCustomerLinkOpened: async (token: string) => {
+    const demo = await demoDb.getOrderByToken(token);
+    if (demo) return demoDb.recordCustomerLinkOpened(token);
+    return supabaseDb.recordCustomerLinkOpened(token);
+  },
+  customerConfirmDelivery: async (token: string, note?: string) => {
+    const demo = await demoDb.getOrderByToken(token);
+    if (demo) return demoDb.customerConfirmDelivery(token, note);
+    return supabaseDb.customerConfirmDelivery(token, note);
+  },
+  customerRescheduleDelivery: async (token: string, newDate: string, newFrom: string, newTo: string, note?: string) => {
+    const demo = await demoDb.getOrderByToken(token);
+    if (demo) return demoDb.customerRescheduleDelivery(token, newDate, newFrom, newTo, note);
+    return supabaseDb.customerRescheduleDelivery(token, newDate, newFrom, newTo, note);
+  },
+  customerCancelDelivery: async (token: string) => {
+    const demo = await demoDb.getOrderByToken(token);
+    if (demo) return demoDb.customerCancelDelivery(token);
+    return supabaseDb.customerCancelDelivery(token);
+  },
+  recordWhatsAppSent: (companyId: string, orderId: string, actor: any, actorName?: string) => (isDemoScope(companyId) ? demoDb.recordWhatsAppSent(companyId, orderId, actor, actorName) : supabaseDb.recordWhatsAppSent(companyId, orderId, actor, actorName)),
+
+  // Order Events & Audit
+  getOrderEvents: (orderId: string) => (currentSessionMode === 'demo' || orderId?.startsWith('demo-') ? demoDb.getOrderEvents(orderId) : supabaseDb.getOrderEvents(orderId)),
+  getAllOrderEvents: (companyId: string, options?: any) => (isDemoScope(companyId) ? demoDb.getAllOrderEvents(companyId, options) : supabaseDb.getAllOrderEvents(companyId, options)),
+  getOrderActivityLogs: (companyId: string, filters?: any) => (isDemoScope(companyId) ? demoDb.getOrderActivityLogs(companyId, filters) : supabaseDb.getOrderActivityLogs(companyId, filters)),
+  addOrderEvent: (companyId: string, data: any) => (isDemoScope(companyId) ? demoDb.addOrderEvent(companyId, data) : supabaseDb.addOrderEvent(companyId, data)),
+
+  // Returns
+  getNextReturnNumber: (companyId: string) => (isDemoScope(companyId) ? demoDb.getNextReturnNumber(companyId) : supabaseDb.getNextReturnNumber(companyId)),
+  getReturns: (companyId: string, courierId?: any, merchantId?: any) => (isDemoScope(companyId) ? demoDb.getReturns(companyId, courierId, merchantId) : supabaseDb.getReturns(companyId, courierId, merchantId)),
+  getReturnById: (companyId: string, id: string) => (isDemoScope(companyId) || id?.startsWith('demo-') ? demoDb.getReturnById(companyId, id) : supabaseDb.getReturnById(companyId, id)),
+  getReturnByOrderId: (companyId: string, orderId: string) => (isDemoScope(companyId) || orderId?.startsWith('demo-') ? demoDb.getReturnByOrderId(companyId, orderId) : supabaseDb.getReturnByOrderId(companyId, orderId)),
+  createReturn: (companyId: string, data: any) => (isDemoScope(companyId) ? demoDb.createReturn(companyId, data) : supabaseDb.createReturn(companyId, data)),
+  updateReturn: (companyId: string, id: string, updates: any, actorContext?: any) => (isDemoScope(companyId) || id?.startsWith('demo-') ? demoDb.updateReturn(companyId, id, updates, actorContext) : supabaseDb.updateReturn(companyId, id, updates, actorContext)),
+  updateReturnStatus: (companyId: string, returnId: string, targetStatus: any, actorContext?: any) => (isDemoScope(companyId) || returnId?.startsWith('demo-') ? demoDb.updateReturnStatus(companyId, returnId, targetStatus, actorContext) : supabaseDb.updateReturnStatus(companyId, returnId, targetStatus, actorContext)),
+  getReturnMetrics: (companyId: string, courierId?: any, merchantId?: any) => (isDemoScope(companyId) ? demoDb.getReturnMetrics(companyId, courierId, merchantId) : supabaseDb.getReturnMetrics(companyId, courierId, merchantId)),
+
+  // Notifications
+  getNotifications: (companyId: string, filter?: any) => (isDemoScope(companyId) ? demoDb.getNotifications(companyId, filter) : supabaseDb.getNotifications(companyId, filter)),
+  addNotification: (companyId: string, data: any) => (isDemoScope(companyId) ? demoDb.addNotification(companyId, data) : supabaseDb.addNotification(companyId, data)),
+  markNotificationAsRead: (companyId: string, notifId: string) => (isDemoScope(companyId) || notifId?.startsWith('demo-') ? demoDb.markNotificationAsRead(companyId, notifId) : supabaseDb.markNotificationAsRead(companyId, notifId)),
+  markAllNotificationsAsRead: (companyId: string, filter?: any) => (isDemoScope(companyId) ? demoDb.markAllNotificationsAsRead(companyId, filter) : supabaseDb.markAllNotificationsAsRead(companyId, filter)),
+
+  // Delivery Slots
+  getDeliverySlots: (companyId: string) => (isDemoScope(companyId) ? demoDb.getDeliverySlots(companyId) : supabaseDb.getDeliverySlots(companyId)),
+  saveDeliverySlots: (companyId: string, slots: any) => (isDemoScope(companyId) ? demoDb.saveDeliverySlots(companyId, slots) : supabaseDb.saveDeliverySlots(companyId, slots)),
+  updateDeliverySlots: (companyId: string, slots: any) => (isDemoScope(companyId) ? demoDb.updateDeliverySlots(companyId, slots) : supabaseDb.updateDeliverySlots(companyId, slots)),
+  addDeliverySlot: (companyId: string, slotData: any) => (isDemoScope(companyId) ? demoDb.addDeliverySlot(companyId, slotData) : supabaseDb.addDeliverySlot(companyId, slotData)),
+  updateDeliverySlot: (companyId: string, slotId: string, updates: any) => (isDemoScope(companyId) ? demoDb.updateDeliverySlot(companyId, slotId, updates) : supabaseDb.updateDeliverySlot(companyId, slotId, updates)),
+  toggleDeliverySlot: (companyId: string, slotId: string) => (isDemoScope(companyId) ? demoDb.toggleDeliverySlot(companyId, slotId) : supabaseDb.toggleDeliverySlot(companyId, slotId)),
+  deleteDeliverySlot: (companyId: string, slotId: string) => (isDemoScope(companyId) ? demoDb.deleteDeliverySlot(companyId, slotId) : supabaseDb.deleteDeliverySlot(companyId, slotId)),
+
+  // Settlements
+  getSettlements: (companyId: string, courierId?: string) => (isDemoScope(companyId) ? demoDb.getSettlements(companyId, courierId) : supabaseDb.getSettlements(companyId, courierId)),
+  getSettlementById: (companyId: string, id: string) => (isDemoScope(companyId) || id?.startsWith('demo-') ? demoDb.getSettlementById(companyId, id) : supabaseDb.getSettlementById(companyId, id)),
+  getNextSettlementNumber: (companyId: string) => (isDemoScope(companyId) ? demoDb.getNextSettlementNumber(companyId) : supabaseDb.getNextSettlementNumber(companyId)),
+  getCourierCollectionSummary: (companyId: string, courierId: string) => (isDemoScope(companyId) ? demoDb.getCourierCollectionSummary(companyId, courierId) : supabaseDb.getCourierCollectionSummary(companyId, courierId)),
+  getAllCouriersCollections: (companyId: string) => (isDemoScope(companyId) ? demoDb.getAllCouriersCollections(companyId) : supabaseDb.getAllCouriersCollections(companyId)),
+  getOutstandingCollectionsTotal: (companyId: string) => (isDemoScope(companyId) ? demoDb.getOutstandingCollectionsTotal(companyId) : supabaseDb.getOutstandingCollectionsTotal(companyId)),
+  createSettlement: (companyId: string, data: any) => (isDemoScope(companyId) ? demoDb.createSettlement(companyId, data) : supabaseDb.createSettlement(companyId, data)),
+
+  // Merchant Transactions & Settlements
+  getMerchantTransactions: (companyId: string, merchantId?: string) => (isDemoScope(companyId) ? demoDb.getMerchantTransactions(companyId, merchantId) : supabaseDb.getMerchantTransactions(companyId, merchantId)),
+  addMerchantTransaction: (companyId: string, data: any) => (isDemoScope(companyId) ? demoDb.addMerchantTransaction(companyId, data) : supabaseDb.addMerchantTransaction(companyId, data)),
+  getMerchantSettlements: (companyId: string, merchantId?: string) => (isDemoScope(companyId) ? demoDb.getMerchantSettlements(companyId, merchantId) : supabaseDb.getMerchantSettlements(companyId, merchantId)),
+  getNextMerchantSettlementNumber: (companyId: string) => (isDemoScope(companyId) ? demoDb.getNextMerchantSettlementNumber(companyId) : supabaseDb.getNextMerchantSettlementNumber(companyId)),
+  createMerchantSettlement: (companyId: string, data: any) => (isDemoScope(companyId) ? demoDb.createMerchantSettlement(companyId, data) : supabaseDb.createMerchantSettlement(companyId, data)),
+  getMerchantFinancialSummary: (companyId: string, merchantId: string) => (isDemoScope(companyId) ? demoDb.getMerchantFinancialSummary(companyId, merchantId) : supabaseDb.getMerchantFinancialSummary(companyId, merchantId)),
+  getAllMerchantsFinancialSummaries: (companyId: string) => (isDemoScope(companyId) ? demoDb.getAllMerchantsFinancialSummaries(companyId) : supabaseDb.getAllMerchantsFinancialSummaries(companyId)),
+
+  // Metrics
+  getAdminMetrics: (companyId: string) => (isDemoScope(companyId) ? demoDb.getAdminMetrics(companyId) : supabaseDb.getAdminMetrics(companyId)),
+  getCourierMetrics: (companyId: string, courierId: string) => (isDemoScope(companyId) ? demoDb.getCourierMetrics(companyId, courierId) : supabaseDb.getCourierMetrics(companyId, courierId)),
 };

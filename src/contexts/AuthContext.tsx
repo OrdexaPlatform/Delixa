@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { AuthSession, Company, Profile, Courier } from '../types';
-import { db } from '../lib/db';
+import { AuthSession, Company, Profile, Courier, SessionMode } from '../types';
+import { db, setDatabaseSessionMode, getDatabaseSessionMode, DEMO_COMPANY_ID, demoDb } from '../lib/db';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+
+const DEMO_ACTIVE_SESSION_KEY = 'delixa_active_demo_session_v2';
 
 interface RegisterCompanyParams {
   companyName: string;
@@ -16,13 +18,16 @@ interface AuthContextType {
   session: AuthSession | null;
   loading: boolean;
   isConfigured: boolean;
+  sessionMode: SessionMode;
   registerCompany: (params: RegisterCompanyParams) => Promise<{ success: boolean; error?: string; requiresEmailConfirmation?: boolean; message?: string }>;
   loginAdmin: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
   loginCourier: (employeeId: string, password?: string) => Promise<{ success: boolean; error?: string }>;
+  loginDemoUser: (role: 'admin' | 'courier', identifier?: string) => Promise<{ success: boolean; error?: string }>;
+  resetDemoData: () => void;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   updateCompanyProfile: (updates: Partial<Company>) => Promise<{ success: boolean; error?: string }>;
-  switchDemoUser?: (type: 'adminCompanyA' | 'adminCompanyB' | 'courierA') => void;
+  switchDemoUser?: (type: 'adminCompanyA' | 'adminCompanyB' | 'courierA') => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -31,12 +36,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [session, setSession] = useState<AuthSession | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Restore session from Supabase Auth
+  // Helper to save or clear active demo session
+  const persistDemoSession = (sess: AuthSession | null) => {
+    if (sess && sess.mode === 'demo') {
+      try {
+        localStorage.setItem(DEMO_ACTIVE_SESSION_KEY, JSON.stringify(sess));
+      } catch (e) {
+        console.warn('Could not persist demo session to localStorage', e);
+      }
+    } else {
+      try {
+        localStorage.removeItem(DEMO_ACTIVE_SESSION_KEY);
+      } catch (e) {}
+    }
+  };
+
+  // Restore session on mount: Prioritize active Demo session, else check Supabase Auth
   useEffect(() => {
     let mounted = true;
 
     async function initSession() {
       try {
+        // 1. Check for active Demo Session in localStorage
+        const storedDemoSessionStr = localStorage.getItem(DEMO_ACTIVE_SESSION_KEY);
+        if (storedDemoSessionStr) {
+          try {
+            const parsed = JSON.parse(storedDemoSessionStr) as AuthSession;
+            if (parsed && parsed.company && parsed.profile) {
+              setDatabaseSessionMode('demo');
+              if (mounted) {
+                setSession({
+                  ...parsed,
+                  mode: 'demo',
+                });
+                setLoading(false);
+              }
+              return;
+            }
+          } catch (demoParseErr) {
+            localStorage.removeItem(DEMO_ACTIVE_SESSION_KEY);
+          }
+        }
+
+        // 2. Otherwise check Supabase Auth for real production session
+        setDatabaseSessionMode('production');
+
         if (!isSupabaseConfigured) {
           if (mounted) setLoading(false);
           return;
@@ -56,7 +100,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }
 
               if (mounted) {
-                setSession({
+                const prodSession: AuthSession = {
+                  mode: 'production',
                   user: {
                     id: authSession.user.id,
                     email: authSession.user.email || profile.phone,
@@ -64,7 +109,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   profile,
                   company,
                   courier,
-                });
+                };
+                setSession(prodSession);
               }
             }
           }
@@ -78,11 +124,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     initSession();
 
-    // Supabase auth state change listener
+    // Supabase auth state change listener (Production only)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, authSession) => {
+      // If we are currently in demo mode, ignore Supabase background events
+      if (getDatabaseSessionMode() === 'demo' || localStorage.getItem(DEMO_ACTIVE_SESSION_KEY)) {
+        return;
+      }
+
       if (event === 'SIGNED_OUT' || !authSession) {
         if (mounted) {
-          // If not a courier-only session
           setSession((prev) => (prev?.profile?.role === 'courier' && !prev?.user?.id ? prev : null));
         }
       } else if (event === 'SIGNED_IN' && authSession.user) {
@@ -91,6 +141,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const company = await db.getCompanyById(profile.company_id);
           if (company && mounted) {
             setSession({
+              mode: 'production',
               user: {
                 id: authSession.user.id,
                 email: authSession.user.email || profile.phone,
@@ -109,9 +160,101 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  // 1. Register new shipping company (Creates Auth User + Company Record + Admin Profile)
+  // 1. One-Click Instant Demo Login (Zero Supabase calls, isolated to LocalStorage)
+  const loginDemoUser = async (role: 'admin' | 'courier', identifier?: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      setLoading(true);
+      setDatabaseSessionMode('demo');
+
+      const company = await demoDb.getCompanyById(DEMO_COMPANY_ID) || (await demoDb.getCompanies())[0];
+      if (!company) {
+        throw new Error('بيانات الحساب التجريبي غير متوفرة');
+      }
+
+      if (role === 'admin') {
+        const profiles = await demoDb.getProfiles(company.id);
+        const adminProfile = profiles.find(p => p.role === 'admin') || profiles[0];
+
+        const demoSession: AuthSession = {
+          mode: 'demo',
+          user: {
+            id: adminProfile.auth_user_id || adminProfile.id,
+            email: company.email,
+          },
+          profile: adminProfile,
+          company,
+        };
+
+        persistDemoSession(demoSession);
+        setSession(demoSession);
+        return { success: true };
+      } else {
+        // Courier Demo Login
+        const couriers = await demoDb.getCouriers(company.id);
+        let targetCourier: Courier | undefined;
+
+        if (identifier) {
+          targetCourier = couriers.find(
+            c => c.employee_id.toLowerCase() === identifier.trim().toLowerCase() || c.id === identifier
+          );
+        }
+
+        if (!targetCourier) {
+          targetCourier = couriers[0]; // fallback to first courier (كريم عادل)
+        }
+
+        const profile: Profile = {
+          id: targetCourier.profile_id || `prof-${targetCourier.id}`,
+          auth_user_id: targetCourier.id,
+          company_id: company.id,
+          full_name: targetCourier.full_name,
+          phone: targetCourier.phone,
+          role: 'courier',
+          created_at: targetCourier.created_at,
+          updated_at: targetCourier.updated_at,
+        };
+
+        const demoSession: AuthSession = {
+          mode: 'demo',
+          user: {
+            id: targetCourier.id,
+            email: `${targetCourier.employee_id.toLowerCase()}@delixa.eg`,
+          },
+          profile,
+          company,
+          courier: targetCourier,
+        };
+
+        persistDemoSession(demoSession);
+        setSession(demoSession);
+        return { success: true };
+      }
+    } catch (err: any) {
+      console.error('Demo login error:', err);
+      return { success: false, error: err.message || 'فشل فتح الحساب التجريبي' };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Reset Demo Database to default state
+  const resetDemoData = () => {
+    demoDb.resetDemoDatabase();
+    if (session?.mode === 'demo') {
+      if (session.profile.role === 'admin') {
+        loginDemoUser('admin');
+      } else if (session.courier) {
+        loginDemoUser('courier', session.courier.employee_id);
+      }
+    }
+  };
+
+  // 2. Register new shipping company (Creates Auth User + Company Record + Admin Profile in Supabase)
   const registerCompany = async (params: RegisterCompanyParams): Promise<{ success: boolean; error?: string; requiresEmailConfirmation?: boolean; message?: string }> => {
     try {
+      setDatabaseSessionMode('production');
+      persistDemoSession(null);
+
       if (!isSupabaseConfigured) {
         return { success: false, error: 'يرجى ضبط مفاتيح Supabase (VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY) لتسجيل الحسابات' };
       }
@@ -156,7 +299,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Step 2 & 3: Attempt to create Company & Profile in Supabase
       try {
-        // Check if database trigger already created the profile
         let profile = await db.getProfileByAuthUserId(authUser.id);
         let company: Company | null = null;
 
@@ -187,6 +329,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (hasImmediateSession && profile && company) {
           const newSession: AuthSession = {
+            mode: 'production',
             user: {
               id: authUser.id,
               email,
@@ -199,7 +342,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } catch (dbErr: any) {
         console.warn('Direct company/profile insert notice during registration:', dbErr);
-        // If email confirmation is required, RLS may defer creation until first authenticated login
       }
 
       // If email confirmation is required by Supabase
@@ -218,9 +360,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // 2. Login Admin via Supabase Auth
+  // 3. Login Admin via Supabase Auth (Production)
   const loginAdmin = async (email: string, password?: string): Promise<{ success: boolean; error?: string }> => {
     try {
+      const normalizedEmail = email.trim().toLowerCase();
+
+      // Check if user is logging into the demo admin email directly from the form
+      if (normalizedEmail === 'admin@cairoexpress.eg' || normalizedEmail === 'demo@delixa.eg') {
+        return loginDemoUser('admin');
+      }
+
+      setDatabaseSessionMode('production');
+      persistDemoSession(null);
+
       if (!isSupabaseConfigured) {
         return { success: false, error: 'يرجى ضبط إعدادات Supabase أولاً' };
       }
@@ -228,8 +380,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!password) {
         return { success: false, error: 'كلمة المرور مطلوبة' };
       }
-
-      const normalizedEmail = email.trim().toLowerCase();
 
       // Sign in with Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
@@ -266,7 +416,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // Fallback 2: If profile does not exist yet (e.g. initial registration with pending email verification), auto-provision now
+      // Fallback 2: If profile does not exist yet, auto-provision now
       if (!profile) {
         const meta = authUser.user_metadata || {};
         const comp = await db.createCompany({
@@ -294,6 +444,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const newSession: AuthSession = {
+        mode: 'production',
         user: {
           id: authUser.id,
           email: normalizedEmail,
@@ -309,27 +460,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // 3. Login Courier using Employee ID + Password
+  // 4. Login Courier using Employee ID + Password
   const loginCourier = async (employeeId: string, password?: string): Promise<{ success: boolean; error?: string }> => {
     try {
       if (!employeeId || !employeeId.trim()) {
         return { success: false, error: 'يرجى إدخال كود الموظف' };
       }
 
-      const courier = await db.getCourierByEmployeeId(employeeId);
+      const cleanEmpId = employeeId.trim().toUpperCase();
+
+      // Check if this is one of the Demo couriers (CR-101, CR-102, CR-103)
+      if (['CR-101', 'CR-102', 'CR-103'].includes(cleanEmpId)) {
+        const demoCourier = await demoDb.getCourierByEmployeeId(cleanEmpId);
+        if (demoCourier) {
+          if (password) {
+            const isMatch = demoDb.verifyCourierPassword(demoCourier, password);
+            if (!isMatch) {
+              return { success: false, error: 'كلمة المرور غير صحيحة' };
+            }
+          }
+          return loginDemoUser('courier', cleanEmpId);
+        }
+      }
+
+      // Otherwise look up in Production Supabase database
+      setDatabaseSessionMode('production');
+      persistDemoSession(null);
+
+      const courier = await db.getCourierByEmployeeId(cleanEmpId);
       if (!courier) {
         return { success: false, error: 'كود الموظف غير صحيح أو غير مسجل' };
       }
 
       if (courier.status !== 'active') {
         return { success: false, error: 'حساب المندوب غير نشط، يرجى مراجعة إدارة الشركة' };
-      }
-
-      if (password) {
-        const isMatch = db.verifyCourierPassword(courier, password);
-        if (!isMatch) {
-          return { success: false, error: 'كلمة المرور غير صحيحة' };
-        }
       }
 
       const company = await db.getCompanyById(courier.company_id);
@@ -351,10 +515,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
+      // Format standard courier auth email
+      const cleanCompanyFragment = courier.company_id.replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase();
+      const cleanEmpFragment = cleanEmpId.replace(/[^a-z0-9]/gi, '').toLowerCase();
+      const courierEmail = `${cleanEmpFragment}.${cleanCompanyFragment}@courier.delixa.app`;
+
+      // 1. Verify password & authenticate with Supabase Auth
+      let authUserId = profile?.auth_user_id;
+      if (password) {
+        // First try standard Supabase Auth Sign In
+        if (isSupabaseConfigured) {
+          const { data: authData } = await supabase.auth.signInWithPassword({
+            email: courierEmail,
+            password: password,
+          });
+          if (authData?.user) {
+            authUserId = authData.user.id;
+          }
+        }
+
+        // Verify password hash
+        const isMatch = db.verifyCourierPassword(courier, password);
+        if (!isMatch && !authUserId) {
+          return { success: false, error: 'كلمة المرور غير صحيحة' };
+        }
+      }
+
       const newSession: AuthSession = {
+        mode: 'production',
         user: {
-          id: profile.auth_user_id || courier.id,
-          email: `${courier.employee_id.toLowerCase()}@delixa.eg`,
+          id: authUserId || profile.auth_user_id,
+          email: courierEmail,
         },
         profile,
         company,
@@ -368,7 +559,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // 4. Update Company Details
+  // 5. Update Company Details
   const updateCompanyProfile = async (updates: Partial<Company>): Promise<{ success: boolean; error?: string }> => {
     if (!session || session.profile.role !== 'admin') {
       return { success: false, error: 'غير مصرح لك بتعديل بيانات الشركة' };
@@ -377,14 +568,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!updated) {
       return { success: false, error: 'فشل تحديث بيانات الشركة' };
     }
-    setSession({
+    const updatedSession = {
       ...session,
       company: updated,
-    });
+    };
+    if (session.mode === 'demo') {
+      persistDemoSession(updatedSession);
+    }
+    setSession(updatedSession);
     return { success: true };
   };
 
-  // 5. Password Reset Request via Supabase Auth
+  // 6. Password Reset Request via Supabase Auth
   const resetPassword = async (email: string): Promise<{ success: boolean; error?: string }> => {
     try {
       if (!isSupabaseConfigured) {
@@ -408,27 +603,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // 7. Logout (Clears Demo or Supabase Auth session)
   const logout = async () => {
     try {
-      if (isSupabaseConfigured) {
-        await supabase.auth.signOut();
+      if (session?.mode === 'demo' || localStorage.getItem(DEMO_ACTIVE_SESSION_KEY)) {
+        persistDemoSession(null);
+        setDatabaseSessionMode('production');
+      } else {
+        if (isSupabaseConfigured) {
+          await supabase.auth.signOut();
+        }
       }
     } catch (e) {
-      console.warn('Sign out error:', e);
+      console.warn('Sign out notice:', e);
+    } finally {
+      setSession(null);
+      setDatabaseSessionMode('production');
     }
-    setSession(null);
+  };
+
+  // 8. Backward-compatible switchDemoUser
+  const switchDemoUser = async (type: 'adminCompanyA' | 'adminCompanyB' | 'courierA') => {
+    if (type === 'adminCompanyA' || type === 'adminCompanyB') {
+      await loginDemoUser('admin');
+    } else {
+      await loginDemoUser('courier', 'CR-101');
+    }
   };
 
   const value: AuthContextType = {
     session,
     loading,
     isConfigured: isSupabaseConfigured,
+    sessionMode: session?.mode || getDatabaseSessionMode(),
     registerCompany,
     loginAdmin,
     loginCourier,
+    loginDemoUser,
+    resetDemoData,
     logout,
     resetPassword,
     updateCompanyProfile,
+    switchDemoUser,
   };
 
   return (
