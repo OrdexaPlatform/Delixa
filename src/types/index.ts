@@ -123,16 +123,21 @@ export interface Order {
   failure_note?: string;
   failure_notes?: string;
   
-  // Customer Confirmation Fields (Prompt 3 & 4)
+  // Customer Confirmation Fields (Prompt 3 & 4 & Link Analytics)
   confirmation_token: string;
+  confirmation_token_expires_at?: string;
   confirmation_sent_at?: string;
   whatsapp_sent_at?: string;
+  link_opened_at?: string;
+  last_link_opened_at?: string;
+  link_open_count?: number;
   customer_response_status: CustomerResponseStatus;
   customer_responded_at?: string;
   customer_selected_date?: string;
   customer_selected_from?: string;
   customer_selected_to?: string;
   customer_note?: string;
+  customer_cancellation_reason?: string;
   customer_reschedule_date?: string;
   customer_reschedule_window?: string;
   customer_reschedule_note?: string;
@@ -141,6 +146,48 @@ export interface Order {
 
   created_at: string;
   updated_at: string;
+}
+
+export interface PublicShipmentMerchant {
+  store_name: string;
+  brand_name?: string | null;
+  phone?: string | null;
+  whatsapp?: string | null;
+  logo_url?: string | null;
+}
+
+export interface PublicShipmentCompany {
+  name: string;
+  phone?: string | null;
+}
+
+export interface PublicShipmentView {
+  token: string;
+  order_number: string;
+  status: OrderStatus;
+  customer_name: string;
+  customer_phone?: string;
+  customer_address: string;
+  city_area?: string;
+  governorate?: string;
+  customer_landmark?: string;
+  cod_amount: number;
+  delivery_date: string;
+  delivery_from: string;
+  delivery_to: string;
+  customer_response_status: CustomerResponseStatus;
+  customer_responded_at?: string;
+  customer_selected_date?: string;
+  customer_selected_from?: string;
+  customer_selected_to?: string;
+  customer_note?: string;
+  customer_cancellation_reason?: string;
+  created_at: string;
+  link_opened_at?: string;
+  last_link_opened_at?: string;
+  link_open_count?: number;
+  merchant?: PublicShipmentMerchant | null;
+  company?: PublicShipmentCompany | null;
 }
 
 export type ReturnCostPayer = 'customer' | 'merchant' | 'none';

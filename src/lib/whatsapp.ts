@@ -1,17 +1,22 @@
 import { Order } from '../types';
 
 /**
- * Generates a short, secure, non-sequential alphanumeric token (6 to 8 chars).
- * Omits ambiguous characters like 0, O, I, l, 1 to prevent reading confusion.
+ * Generates a short, cryptographically secure, URL-safe alphanumeric token (8 to 10 chars).
+ * Omits easily confused characters like 0, O, I, l, 1.
  */
 export function generateConfirmationToken(): string {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz';
-  let token = '';
-  const length = 6;
+  const length = 8;
   const randomValues = new Uint8Array(length);
-  
-  if (typeof window !== 'undefined' && window.crypto) {
+  let token = '';
+
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
     window.crypto.getRandomValues(randomValues);
+    for (let i = 0; i < length; i++) {
+      token += chars[randomValues[i] % chars.length];
+    }
+  } else if (typeof globalThis !== 'undefined' && (globalThis as any).crypto && (globalThis as any).crypto.getRandomValues) {
+    (globalThis as any).crypto.getRandomValues(randomValues);
     for (let i = 0; i < length; i++) {
       token += chars[randomValues[i] % chars.length];
     }
@@ -57,41 +62,65 @@ export function normalizeEgyptianPhone(phone: string): string {
 }
 
 /**
- * Builds the full public shipment confirmation URL
+ * Returns the public application URL base using environment variables or browser origin.
  */
-export function getConfirmationUrl(token: string): string {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://delixa.app';
-  return `${origin}/s/${token}`;
+export function getPublicAppBaseUrl(): string {
+  // 1. Check Vite frontend environment variables
+  try {
+    const viteUrl = (import.meta as any)?.env?.VITE_PUBLIC_APP_URL || (import.meta as any)?.env?.VITE_APP_URL;
+    if (viteUrl && typeof viteUrl === 'string' && viteUrl.trim()) {
+      return viteUrl.trim().replace(/\/+$/, '');
+    }
+  } catch (_) {}
+
+  // 2. Check Node / Server environment variables
+  if (typeof process !== 'undefined' && process.env) {
+    const procUrl = process.env.VITE_PUBLIC_APP_URL || process.env.PUBLIC_APP_URL || process.env.APP_URL;
+    if (procUrl && typeof procUrl === 'string' && procUrl.trim()) {
+      return procUrl.trim().replace(/\/+$/, '');
+    }
+  }
+
+  // 3. Fallback to active browser origin
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
+    return window.location.origin.replace(/\/+$/, '');
+  }
+
+  return '';
 }
 
 /**
- * Generates the friendly, structured Arabic WhatsApp message for customer confirmation
+ * Builds the full public shipment confirmation URL (/c/:token)
+ */
+export function getConfirmationUrl(token: string): string {
+  const base = getPublicAppBaseUrl();
+  const cleanToken = (token || '').trim();
+  return base ? `${base}/c/${cleanToken}` : `/c/${cleanToken}`;
+}
+
+/**
+ * Generates the clean, customer-friendly Arabic WhatsApp message for customer confirmation
  */
 export function generateWhatsAppConfirmationMessage(params: {
   order: Order;
   merchantName: string;
-  companyName: string;
+  companyName?: string;
 }): string {
-  const { order, merchantName, companyName } = params;
-  const confirmationUrl = getConfirmationUrl(order.confirmation_token);
-  
-  const formattedDate = order.delivery_date || 'اليوم';
-  const timeWindow = (order.delivery_from && order.delivery_to)
-    ? `من ${order.delivery_from} إلى ${order.delivery_to}`
-    : 'خلال ساعات العمل';
+  const { order, merchantName } = params;
+  const token = order.confirmation_token || (order as any).token || order.id;
+  const confirmationUrl = getConfirmationUrl(token);
+  const customerName = order.customer_name?.trim() || 'عزيزي العميل';
+  const amount = Number(order.cod_amount || 0).toLocaleString();
 
-  return `🚚 *أهلاً بك يا فندم،*
-لديك طلب جديد من *${merchantName}* جاهز للتوصيل.
+  return `مرحباً ${customerName} 👋
 
-📦 *رقم الشحنة:* #${order.order_number}
-💰 *المبلغ المطلوب عند الاستلام:* ${Number(order.cod_amount).toLocaleString()} جنيه
-📅 *موعد التوصيل المحدد:* ${formattedDate}
-🕐 *نافذة التوصيل:* ${timeWindow}
+لديك شحنة من *${merchantName}* بقيمة *${amount}* جنيه.
 
-يرجى الدخول على الرابط التالي لتأكيد استلام الشحنة في الموعد المحدد، أو اختيار موعد آخر يناسبك، أو إلغاء الطلب:
-🔗 ${confirmationUrl}
+يمكنك تأكيد استلام الشحنة أو تأجيلها أو إلغاء الطلب من خلال الرابط التالي:
 
-شكرًا لتعاونكم مع *${companyName}*.`;
+${confirmationUrl}
+
+الرابط خاص بشحنتك فقط.`;
 }
 
 /**
@@ -114,3 +143,4 @@ export function openWhatsAppChat(phone: string, text: string): boolean {
   }
   return false;
 }
+

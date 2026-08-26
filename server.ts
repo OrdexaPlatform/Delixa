@@ -47,6 +47,380 @@ async function startServer() {
     });
   });
 
+  // ============================================================================
+  // CUSTOMER SHIPMENT CONFIRMATION & SELF-SERVICE PUBLIC API ENDPOINTS
+  // ============================================================================
+
+  function formatPublicShipment(order: any, merchant: any = null, company: any = null) {
+    return {
+      token: order.confirmation_token,
+      order_number: order.order_number,
+      status: order.status,
+      customer_name: order.customer_name,
+      customer_phone: order.customer_phone,
+      customer_address: order.customer_address,
+      city_area: order.city_area,
+      governorate: order.governorate,
+      customer_landmark: order.customer_landmark,
+      cod_amount: Number(order.cod_amount) || 0,
+      delivery_date: order.delivery_date,
+      delivery_from: order.delivery_from,
+      delivery_to: order.delivery_to,
+      customer_response_status: order.customer_response_status || 'pending',
+      customer_responded_at: order.customer_responded_at,
+      customer_selected_date: order.customer_selected_date,
+      customer_selected_from: order.customer_selected_from,
+      customer_selected_to: order.customer_selected_to,
+      customer_note: order.customer_note,
+      customer_cancellation_reason: order.customer_cancellation_reason,
+      created_at: order.created_at,
+      link_opened_at: order.link_opened_at,
+      last_link_opened_at: order.last_link_opened_at,
+      link_open_count: order.link_open_count || 0,
+      merchant: merchant ? {
+        store_name: merchant.store_name,
+        brand_name: merchant.brand_name || null,
+        phone: merchant.phone || null,
+        whatsapp: merchant.whatsapp || null,
+        logo_url: merchant.logo_url || null,
+      } : null,
+      company: company ? {
+        name: company.name || 'Delixa Logistics',
+        phone: company.phone || null,
+      } : null,
+    };
+  }
+
+  // GET /api/customer/shipment/:token -> Fetch shipment details & record link open
+  app.get('/api/customer/shipment/:token', async (req, res) => {
+    try {
+      const rawToken = (req.params.token || '').trim();
+      if (!rawToken) {
+        return res.status(400).json({ success: false, code: 'INVALID_TOKEN', error: 'رمز الرابط غير صالح' });
+      }
+
+      if (!supabaseUrl || !supabaseAnonKey) {
+        return res.status(503).json({ success: false, code: 'DB_UNAVAILABLE', error: 'خدمة قاعدة البيانات غير متوفرة حالياً' });
+      }
+
+      const dbClient = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      // 1. Fetch Order by confirmation_token
+      const { data: order, error: orderError } = await dbClient
+        .from('orders')
+        .select('*')
+        .eq('confirmation_token', rawToken)
+        .maybeSingle();
+
+      if (orderError) {
+        console.error('Customer shipment fetch error:', orderError);
+        return res.status(500).json({ success: false, code: 'SERVER_ERROR', error: 'حدث خطأ أثناء جلب بيانات الشحنة' });
+      }
+
+      if (!order) {
+        return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'لم يتم العثور على الشحنة. قد يكون الرابط خاطئاً أو غير موجود.' });
+      }
+
+      // 2. Check Expiration
+      if (order.confirmation_token_expires_at) {
+        const expiresAt = new Date(order.confirmation_token_expires_at).getTime();
+        if (!isNaN(expiresAt) && expiresAt < Date.now()) {
+          return res.status(410).json({ success: false, code: 'EXPIRED', error: 'عذراً، هذا الرابط انتهت صلاحيته. يرجى التواصل مع المتجر أو شركة التوصيل.' });
+        }
+      }
+
+      // 3. Record Link Opened in DB (Increment counter & update timestamps)
+      const nowIso = new Date().toISOString();
+      const newOpenCount = (order.link_open_count || 0) + 1;
+      const updateData: Record<string, any> = {
+        link_open_count: newOpenCount,
+        last_link_opened_at: nowIso,
+      };
+      if (!order.link_opened_at) {
+        updateData.link_opened_at = nowIso;
+      }
+
+      await dbClient.from('orders').update(updateData).eq('id', order.id);
+
+      // Record Order Event in order_events table
+      try {
+        await dbClient.from('order_events').insert([{
+          company_id: order.company_id,
+          order_id: order.id,
+          event_type: 'link_opened',
+          actor: 'customer',
+          actor_name: order.customer_name || 'العميل',
+          details: `فتح العميل رابط التأكيد والتتبع من هاتفه (الفتح رقم ${newOpenCount})`,
+          created_at: nowIso,
+        }]);
+      } catch (err: any) {
+        console.warn('Order event link_opened log warning:', err?.message || err);
+      }
+
+      // 4. Fetch Merchant & Company info
+      const [merchantRes, companyRes] = await Promise.all([
+        order.merchant_id
+          ? dbClient.from('merchants').select('store_name, brand_name, phone, whatsapp, logo_url').eq('id', order.merchant_id).maybeSingle()
+          : Promise.resolve({ data: null }),
+        order.company_id
+          ? dbClient.from('companies').select('name, phone').eq('id', order.company_id).maybeSingle()
+          : Promise.resolve({ data: null }),
+      ]);
+
+      const publicData = formatPublicShipment(
+        { ...order, ...updateData },
+        merchantRes.data,
+        companyRes.data
+      );
+
+      return res.json({
+        success: true,
+        shipment: publicData,
+      });
+    } catch (err: any) {
+      console.error('Customer shipment API exception:', err);
+      return res.status(500).json({ success: false, code: 'SERVER_ERROR', error: err.message || 'حدث خطأ داخلي' });
+    }
+  });
+
+  // POST /api/customer/shipment/:token/confirm -> Confirm delivery today
+  app.post('/api/customer/shipment/:token/confirm', async (req, res) => {
+    try {
+      const rawToken = (req.params.token || '').trim();
+      if (!rawToken) {
+        return res.status(400).json({ success: false, code: 'INVALID_TOKEN', error: 'رمز الرابط غير صالح' });
+      }
+
+      const dbClient = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      const { data: order } = await dbClient.from('orders').select('*').eq('confirmation_token', rawToken).maybeSingle();
+      if (!order) {
+        return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'لم يتم العثور على الشحنة' });
+      }
+
+      if (order.status === 'delivered') {
+        return res.status(400).json({ success: false, code: 'ALREADY_DELIVERED', error: 'تم تسليم هذه الشحنة بالفعل' });
+      }
+      if (order.status === 'cancelled') {
+        return res.status(400).json({ success: false, code: 'ALREADY_CANCELLED', error: 'تم إلغاء هذه الشحنة مسبقاً' });
+      }
+
+      const note = typeof req.body?.note === 'string' ? req.body.note.trim() : null;
+      const nowIso = new Date().toISOString();
+      const updates: Record<string, any> = {
+        customer_response_status: 'confirmed',
+        customer_responded_at: nowIso,
+        updated_at: nowIso,
+      };
+      if (note) updates.customer_note = note;
+
+      const { data: updatedOrder, error: updateErr } = await dbClient
+        .from('orders')
+        .update(updates)
+        .eq('id', order.id)
+        .select('*')
+        .single();
+
+      if (updateErr) {
+        return res.status(500).json({ success: false, error: updateErr.message });
+      }
+
+      // Add order event
+      try {
+        await dbClient.from('order_events').insert([{
+          company_id: order.company_id,
+          order_id: order.id,
+          event_type: 'customer_confirmed',
+          actor: 'customer',
+          actor_name: order.customer_name || 'العميل',
+          details: note ? `أكد العميل استلام الشحنة اليوم. ملاحظة العميل: ${note}` : 'أكد العميل استلام الشحنة في الموعد المحدد اليوم',
+          created_at: nowIso,
+        }]);
+      } catch (_) {}
+
+      const [merchantRes, companyRes] = await Promise.all([
+        order.merchant_id ? dbClient.from('merchants').select('store_name, brand_name, phone, whatsapp, logo_url').eq('id', order.merchant_id).maybeSingle() : Promise.resolve({ data: null }),
+        order.company_id ? dbClient.from('companies').select('name, phone').eq('id', order.company_id).maybeSingle() : Promise.resolve({ data: null }),
+      ]);
+
+      return res.json({
+        success: true,
+        message: 'تم تأكيد موعد استلام الشحنة بنجاح',
+        shipment: formatPublicShipment(updatedOrder, merchantRes.data, companyRes.data),
+      });
+    } catch (err: any) {
+      console.error('Customer confirm API exception:', err);
+      return res.status(500).json({ success: false, error: err.message || 'حدث خطأ داخلي أثناء التأكيد' });
+    }
+  });
+
+  // POST /api/customer/shipment/:token/reschedule -> Reschedule delivery date/slot
+  app.post('/api/customer/shipment/:token/reschedule', async (req, res) => {
+    try {
+      const rawToken = (req.params.token || '').trim();
+      if (!rawToken) {
+        return res.status(400).json({ success: false, code: 'INVALID_TOKEN', error: 'رمز الرابط غير صالح' });
+      }
+
+      const { new_date, new_from, new_to, note } = req.body || {};
+      if (!new_date) {
+        return res.status(400).json({ success: false, error: 'يرجى اختيار تاريخ التوصيل الجديد' });
+      }
+
+      const dbClient = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      const { data: order } = await dbClient.from('orders').select('*').eq('confirmation_token', rawToken).maybeSingle();
+      if (!order) {
+        return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'لم يتم العثور على الشحنة' });
+      }
+
+      if (order.status === 'delivered') {
+        return res.status(400).json({ success: false, code: 'ALREADY_DELIVERED', error: 'تم تسليم هذه الشحنة بالفعل ولا يمكن إعادة جدولتها' });
+      }
+      if (order.status === 'cancelled') {
+        return res.status(400).json({ success: false, code: 'ALREADY_CANCELLED', error: 'تم إلغاء هذه الشحنة مسبقاً' });
+      }
+
+      const nowIso = new Date().toISOString();
+      const slotFrom = new_from || '12:00';
+      const slotTo = new_to || '16:00';
+      const updates: Record<string, any> = {
+        delivery_date: new_date,
+        delivery_from: slotFrom,
+        delivery_to: slotTo,
+        customer_selected_date: new_date,
+        customer_selected_from: slotFrom,
+        customer_selected_to: slotTo,
+        customer_response_status: 'reschedule_requested',
+        customer_responded_at: nowIso,
+        updated_at: nowIso,
+      };
+      if (typeof note === 'string' && note.trim()) {
+        updates.customer_note = note.trim();
+      }
+
+      const { data: updatedOrder, error: updateErr } = await dbClient
+        .from('orders')
+        .update(updates)
+        .eq('id', order.id)
+        .select('*')
+        .single();
+
+      if (updateErr) {
+        return res.status(500).json({ success: false, error: updateErr.message });
+      }
+
+      // Add order event
+      try {
+        await dbClient.from('order_events').insert([{
+          company_id: order.company_id,
+          order_id: order.id,
+          event_type: 'customer_rescheduled',
+          actor: 'customer',
+          actor_name: order.customer_name || 'العميل',
+          details: `طلب العميل تأجيل موعد الاستلام إلى ${new_date} (بين ${slotFrom} و ${slotTo})${note ? ` - ملاحظة: ${note}` : ''}`,
+          created_at: nowIso,
+        }]);
+      } catch (_) {}
+
+      const [merchantRes, companyRes] = await Promise.all([
+        order.merchant_id ? dbClient.from('merchants').select('store_name, brand_name, phone, whatsapp, logo_url').eq('id', order.merchant_id).maybeSingle() : Promise.resolve({ data: null }),
+        order.company_id ? dbClient.from('companies').select('name, phone').eq('id', order.company_id).maybeSingle() : Promise.resolve({ data: null }),
+      ]);
+
+      return res.json({
+        success: true,
+        message: 'تم تسجيل طلب تعديل موعد الاستلام بنجاح',
+        shipment: formatPublicShipment(updatedOrder, merchantRes.data, companyRes.data),
+      });
+    } catch (err: any) {
+      console.error('Customer reschedule API exception:', err);
+      return res.status(500).json({ success: false, error: err.message || 'حدث خطأ داخلي أثناء إعادة الجدولة' });
+    }
+  });
+
+  // POST /api/customer/shipment/:token/cancel -> Cancel shipment
+  app.post('/api/customer/shipment/:token/cancel', async (req, res) => {
+    try {
+      const rawToken = (req.params.token || '').trim();
+      if (!rawToken) {
+        return res.status(400).json({ success: false, code: 'INVALID_TOKEN', error: 'رمز الرابط غير صالح' });
+      }
+
+      const dbClient = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      const { data: order } = await dbClient.from('orders').select('*').eq('confirmation_token', rawToken).maybeSingle();
+      if (!order) {
+        return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'لم يتم العثور على الشحنة' });
+      }
+
+      if (order.status === 'delivered') {
+        return res.status(400).json({ success: false, code: 'ALREADY_DELIVERED', error: 'لا يمكن إلغاء شحنة تم تسليمها بالفعل' });
+      }
+
+      const reason = typeof req.body?.reason === 'string' && req.body.reason.trim()
+        ? req.body.reason.trim()
+        : 'إلغاء بطلب من العميل عبر رابط التأكيد';
+
+      const nowIso = new Date().toISOString();
+      const updates: Record<string, any> = {
+        status: 'cancelled',
+        customer_response_status: 'cancelled',
+        customer_cancellation_reason: reason,
+        cancellation_source: 'customer',
+        cancellation_timestamp: nowIso,
+        customer_responded_at: nowIso,
+        updated_at: nowIso,
+      };
+
+      const { data: updatedOrder, error: updateErr } = await dbClient
+        .from('orders')
+        .update(updates)
+        .eq('id', order.id)
+        .select('*')
+        .single();
+
+      if (updateErr) {
+        return res.status(500).json({ success: false, error: updateErr.message });
+      }
+
+      // Add order event
+      try {
+        await dbClient.from('order_events').insert([{
+          company_id: order.company_id,
+          order_id: order.id,
+          event_type: 'customer_cancelled',
+          actor: 'customer',
+          actor_name: order.customer_name || 'العميل',
+          details: `قام العميل بإلغاء الشحنة عبر رابط التأكيد. السبب: ${reason}`,
+          created_at: nowIso,
+        }]);
+      } catch (_) {}
+
+      const [merchantRes, companyRes] = await Promise.all([
+        order.merchant_id ? dbClient.from('merchants').select('store_name, brand_name, phone, whatsapp, logo_url').eq('id', order.merchant_id).maybeSingle() : Promise.resolve({ data: null }),
+        order.company_id ? dbClient.from('companies').select('name, phone').eq('id', order.company_id).maybeSingle() : Promise.resolve({ data: null }),
+      ]);
+
+      return res.json({
+        success: true,
+        message: 'تم إلغاء الشحنة بناءً على طلبك',
+        shipment: formatPublicShipment(updatedOrder, merchantRes.data, companyRes.data),
+      });
+    } catch (err: any) {
+      console.error('Customer cancel API exception:', err);
+      return res.status(500).json({ success: false, error: err.message || 'حدث خطأ داخلي أثناء إلغاء الشحنة' });
+    }
+  });
+
   // 2. Admin Create Courier Endpoint (Server-Side with Auth Verification)
   app.post('/api/admin/create-courier', async (req, res) => {
     try {

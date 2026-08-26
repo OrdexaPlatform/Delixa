@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import { db, FAILURE_REASONS, subscribeOrderUpdates } from '../../lib/db';
-import { openWhatsAppChat, generateWhatsAppConfirmationMessage } from '../../lib/whatsapp';
+import { openWhatsAppChat, generateWhatsAppConfirmationMessage, getConfirmationUrl } from '../../lib/whatsapp';
 import { Order, OrderStatus, DeliveryFailureReason, CustomerResponseStatus } from '../../types';
 import { Modal } from '../../components/common/Modal';
 import { 
@@ -181,7 +181,7 @@ export const CourierOrdersPage: React.FC<CourierOrdersPageProps> = ({ navigate }
   const handleCopyLink = (order: Order, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const token = order.confirmation_token || order.id;
-    const link = `${window.location.origin}/s/${token}`;
+    const link = getConfirmationUrl(token);
     navigator.clipboard.writeText(link);
     showToast('success', isRTL ? 'تم نسخ رابط تأكيد الشحنة للعميل' : 'Customer link copied!');
   };

@@ -73,12 +73,22 @@ const AppRouter: React.FC = () => {
     );
   }
 
-  // 1. Public Customer Tracking Pages
-  if (currentPath.startsWith('/s/') || currentPath.startsWith('/track/')) {
-    const token = currentPath.replace(/^\/(s|track)\//, '').split('?')[0];
+  // 1. Public Customer Tracking & Confirmation Pages (/c/:token, /s/:token, /track/:token, /confirm/:token)
+  if (
+    currentPath.startsWith('/c/') ||
+    currentPath.startsWith('/s/') ||
+    currentPath.startsWith('/confirm/') ||
+    currentPath.startsWith('/track/')
+  ) {
+    const token = currentPath.replace(/^\/(c|s|confirm|track)\//, '').split('?')[0];
     return <CustomerShipmentPage token={token} navigate={navigate} />;
   }
-  if (currentPath === '/s' || currentPath === '/track') {
+  if (
+    currentPath === '/c' ||
+    currentPath === '/s' ||
+    currentPath === '/confirm' ||
+    currentPath === '/track'
+  ) {
     return <CustomerShipmentPage token="" navigate={navigate} />;
   }
 

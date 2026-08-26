@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import { db, FAILURE_REASONS, subscribeOrderUpdates } from '../../lib/db';
-import { openWhatsAppChat, generateWhatsAppConfirmationMessage } from '../../lib/whatsapp';
+import { openWhatsAppChat, generateWhatsAppConfirmationMessage, getConfirmationUrl } from '../../lib/whatsapp';
 import { Order, OrderStatus, Merchant, Courier, DeliveryFailureReason, CustomerResponseStatus, OrderEvent, ReturnRecord } from '../../types';
 import { Modal } from '../../components/common/Modal';
 import { ReturnInvoiceModal } from '../../components/returns/ReturnInvoiceModal';
@@ -192,7 +192,7 @@ export const OrdersFoundationPage: React.FC = () => {
   const handleCopyLink = (order: Order, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const token = order.confirmation_token || order.id;
-    const link = `${window.location.origin}/s/${token}`;
+    const link = getConfirmationUrl(token);
     navigator.clipboard.writeText(link);
     showToast('success', isRTL ? 'تم نسخ رابط العميل بنجاح!' : 'Customer link copied to clipboard!', link);
   };
@@ -1105,7 +1105,7 @@ export const OrdersFoundationPage: React.FC = () => {
                 {/* Customer Short Link & Quick Actions */}
                 <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
                   <div className="flex-1 font-mono text-[11px] text-slate-600 truncate px-2 py-1 bg-slate-50 rounded-lg border border-slate-200" dir="ltr">
-                    {`${window.location.origin}/s/${currentOrder.confirmation_token || currentOrder.id}`}
+                    {getConfirmationUrl(currentOrder.confirmation_token || currentOrder.id)}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
@@ -1117,7 +1117,7 @@ export const OrdersFoundationPage: React.FC = () => {
                       <span>{t.copyCustomerLink}</span>
                     </button>
                     <a
-                      href={`/s/${currentOrder.confirmation_token || currentOrder.id}`}
+                      href={getConfirmationUrl(currentOrder.confirmation_token || currentOrder.id)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer"

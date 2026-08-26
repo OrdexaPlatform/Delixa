@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, subscribeOrderUpdates } from '../../lib/db';
-import { Order, Merchant, Company } from '../../types';
+import { PublicShipmentView } from '../../types';
 import { 
   Package, 
   CheckCircle2, 
@@ -14,13 +14,15 @@ import {
   Phone, 
   Truck, 
   ShieldCheck, 
-  ArrowRight, 
   Send,
   MessageSquare,
   Sparkles,
-  Info,
   CalendarCheck2,
-  CalendarClock
+  CalendarClock,
+  RotateCcw,
+  Store,
+  HelpCircle,
+  Clock3
 } from 'lucide-react';
 
 interface CustomerShipmentPageProps {
@@ -33,17 +35,16 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
   const isAr = lang === 'ar';
 
   const [loading, setLoading] = useState<boolean>(true);
-  const [order, setOrder] = useState<Order | null>(null);
-  const [merchant, setMerchant] = useState<Merchant | null>(null);
-  const [company, setCompany] = useState<Company | null>(null);
+  const [shipment, setShipment] = useState<PublicShipmentView | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Form states
-  const [activeTab, setActiveTab] = useState<'details' | 'reschedule' | 'cancel'>('details');
+  // Interaction & Form states
+  const [activeTab, setActiveTab] = useState<'details' | 'reschedule'>('details');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
-  // Reschedule inputs
+  // Reschedule Form inputs
   const todayStr = new Date().toISOString().split('T')[0];
   const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
   const afterTomorrowStr = new Date(Date.now() + 172800000).toISOString().split('T')[0];
@@ -52,65 +53,189 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
   const [selectedSlot, setSelectedSlot] = useState<{ from: string; to: string }>({ from: '12:00', to: '16:00' });
   const [customerNote, setCustomerNote] = useState<string>('');
 
-  // Cancel dialog
+  // Cancel Modal states
   const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
+  const [cancelReasonPreset, setCancelReasonPreset] = useState<string>('تغيير في الخطط أو الميزانية');
+  const [cancelReasonCustom, setCancelReasonCustom] = useState<string>('');
 
-  // Fetch Order by Token
-  const loadOrder = async () => {
-    if (!token) {
-      setErrorMessage(isAr ? 'رابط الشحنة غير صالح' : 'Invalid shipment link');
+  // Fetch Shipment Details from Secure Backend API with Fallback
+  const loadShipment = async () => {
+    const cleanToken = (token || '').trim();
+    if (!cleanToken) {
+      setErrorCode('INVALID_TOKEN');
+      setErrorMessage(isAr ? 'رابط الشحنة غير صالح أو مفقود' : 'Invalid or missing shipment link');
       setLoading(false);
       return;
     }
 
-    const res = await db.getOrderByToken(token);
-    if (!res) {
-      setErrorMessage(
-        isAr
-          ? 'لم يتم العثور على الشحنة. قد يكون الرابط خاطئاً أو منتهي الصلاحية.'
-          : 'Shipment not found. The link may be incorrect or expired.'
-      );
-      setOrder(null);
-      setMerchant(null);
-      setCompany(null);
-    } else {
-      setOrder(res.order);
-      setMerchant(res.merchant || null);
-      setCompany(res.company || null);
-      setErrorMessage(null);
+    try {
+      const response = await fetch(`/api/customer/shipment/${encodeURIComponent(cleanToken)}`, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+      });
 
-      // Record link opened event
-      await db.recordCustomerLinkOpened(token);
+      const data = await response.json();
+
+      if (response.ok && data.success && data.shipment) {
+        setShipment(data.shipment);
+        setErrorCode(null);
+        setErrorMessage(null);
+        setLoading(false);
+        return;
+      }
+
+      if (response.status === 410 || data.code === 'EXPIRED') {
+        setErrorCode('EXPIRED');
+        setErrorMessage(data.error || (isAr ? 'عذراً، هذا الرابط انتهت صلاحيته' : 'This link has expired'));
+        setLoading(false);
+        return;
+      }
+
+      if (response.status === 404 || data.code === 'NOT_FOUND') {
+        // Fallback check in local db if running in mock/demo mode
+        const fallback = await db.getOrderByToken(cleanToken);
+        if (fallback && fallback.order) {
+          const formattedFallback: PublicShipmentView = {
+            token: fallback.order.confirmation_token || cleanToken,
+            order_number: fallback.order.order_number,
+            status: fallback.order.status,
+            customer_name: fallback.order.customer_name,
+            customer_phone: fallback.order.customer_phone,
+            customer_address: fallback.order.customer_address,
+            city_area: fallback.order.city_area,
+            governorate: fallback.order.governorate,
+            customer_landmark: fallback.order.customer_landmark,
+            cod_amount: Number(fallback.order.cod_amount) || 0,
+            delivery_date: fallback.order.delivery_date,
+            delivery_from: fallback.order.delivery_from,
+            delivery_to: fallback.order.delivery_to,
+            customer_response_status: fallback.order.customer_response_status || 'pending',
+            customer_responded_at: fallback.order.customer_responded_at,
+            customer_selected_date: fallback.order.customer_selected_date,
+            customer_selected_from: fallback.order.customer_selected_from,
+            customer_selected_to: fallback.order.customer_selected_to,
+            customer_note: fallback.order.customer_note,
+            customer_cancellation_reason: (fallback.order as any).customer_cancellation_reason,
+            created_at: fallback.order.created_at,
+            link_opened_at: fallback.order.link_opened_at,
+            last_link_opened_at: fallback.order.last_link_opened_at,
+            link_open_count: fallback.order.link_open_count || 1,
+            merchant: fallback.merchant ? {
+              store_name: fallback.merchant.store_name,
+              brand_name: fallback.merchant.brand_name,
+              phone: fallback.merchant.phone,
+              whatsapp: fallback.merchant.whatsapp,
+              logo_url: fallback.merchant.logo_url,
+            } : null,
+            company: fallback.company ? {
+              name: fallback.company.name,
+              phone: fallback.company.phone,
+            } : null,
+          };
+          setShipment(formattedFallback);
+          setErrorCode(null);
+          setErrorMessage(null);
+          setLoading(false);
+          return;
+        }
+
+        setErrorCode('NOT_FOUND');
+        setErrorMessage(data.error || (isAr ? 'لم يتم العثور على الشحنة. قد يكون الرابط خاطئاً.' : 'Shipment not found.'));
+        setLoading(false);
+        return;
+      }
+
+      setErrorCode('ERROR');
+      setErrorMessage(data.error || (isAr ? 'تعذر جلب تفاصيل الشحنة' : 'Failed to fetch shipment details'));
+    } catch (err: any) {
+      console.warn('Backend API connection warning, trying fallback client store:', err);
+      const fallback = await db.getOrderByToken(cleanToken);
+      if (fallback && fallback.order) {
+        setShipment({
+          token: fallback.order.confirmation_token || cleanToken,
+          order_number: fallback.order.order_number,
+          status: fallback.order.status,
+          customer_name: fallback.order.customer_name,
+          customer_phone: fallback.order.customer_phone,
+          customer_address: fallback.order.customer_address,
+          city_area: fallback.order.city_area,
+          governorate: fallback.order.governorate,
+          customer_landmark: fallback.order.customer_landmark,
+          cod_amount: Number(fallback.order.cod_amount) || 0,
+          delivery_date: fallback.order.delivery_date,
+          delivery_from: fallback.order.delivery_from,
+          delivery_to: fallback.order.delivery_to,
+          customer_response_status: fallback.order.customer_response_status || 'pending',
+          customer_responded_at: fallback.order.customer_responded_at,
+          customer_selected_date: fallback.order.customer_selected_date,
+          customer_selected_from: fallback.order.customer_selected_from,
+          customer_selected_to: fallback.order.customer_selected_to,
+          customer_note: fallback.order.customer_note,
+          created_at: fallback.order.created_at,
+          merchant: fallback.merchant ? {
+            store_name: fallback.merchant.store_name,
+            brand_name: fallback.merchant.brand_name,
+            phone: fallback.merchant.phone,
+            whatsapp: fallback.merchant.whatsapp,
+          } : null,
+          company: fallback.company ? {
+            name: fallback.company.name,
+            phone: fallback.company.phone,
+          } : null,
+        });
+        setErrorCode(null);
+        setErrorMessage(null);
+      } else {
+        setErrorCode('NETWORK_ERROR');
+        setErrorMessage(isAr ? 'تعذر الاتصال بالخادم، يرجى التحقق من اتصال الإنترنت' : 'Connection error');
+      }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => {
-    loadOrder();
+    loadShipment();
 
-    // Subscribe to real-time events for this shipment
-    const unsubscribe = subscribeOrderUpdates((updatedOrderId) => {
-      if (!updatedOrderId || (order && order.id === updatedOrderId)) {
-        loadOrder();
-      }
+    // Subscribe to live order updates
+    const unsubscribe = subscribeOrderUpdates(() => {
+      loadShipment();
     });
 
     return () => unsubscribe();
   }, [token]);
 
-  // Handle Confirm Delivery
+  // Action: Confirm Delivery in Scheduled Window
   const handleConfirm = async () => {
     if (!token || isSubmitting) return;
     setIsSubmitting(true);
     setSuccessNotice(null);
 
     try {
-      const res = await db.customerConfirmDelivery(token);
-      if (res.success && res.order) {
-        setOrder(res.order);
-        setSuccessNotice(isAr ? 'تم تأكيد موعد الاستلام بنجاح! مندوبنا سيتواصل معك.' : 'Delivery confirmed successfully!');
+      const response = await fetch(`/api/customer/shipment/${encodeURIComponent(token)}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: customerNote }),
+      });
+
+      const res = await response.json();
+
+      if (response.ok && res.success && res.shipment) {
+        setShipment(res.shipment);
+        setSuccessNotice(
+          isAr
+            ? 'تم تأكيد موعد استلام الشحنة بنجاح! مندوب التوصيل في طريقه إليك في الموعد المحدد.'
+            : 'Delivery confirmed successfully! Our courier is scheduled for your window.'
+        );
       } else {
-        alert(res.error || 'حدث خطأ أثناء التأكيد');
+        // Fallback
+        const fbRes = await db.customerConfirmDelivery(token);
+        if (fbRes.success && fbRes.order) {
+          loadShipment();
+          setSuccessNotice(isAr ? 'تم تأكيد موعد الاستلام بنجاح!' : 'Delivery confirmed successfully!');
+        } else {
+          alert(res.error || fbRes.error || (isAr ? 'حدث خطأ أثناء التأكيد' : 'Confirmation error'));
+        }
       }
     } catch (e: any) {
       alert(e.message || 'حدث خطأ غير متوقع');
@@ -119,7 +244,7 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
     }
   };
 
-  // Handle Reschedule Delivery
+  // Action: Reschedule Delivery Date & Time Slot
   const handleReschedule = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token || isSubmitting) return;
@@ -127,24 +252,37 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
     setSuccessNotice(null);
 
     try {
-      const res = await db.customerRescheduleDelivery(
-        token,
-        selectedDate,
-        selectedSlot.from,
-        selectedSlot.to,
-        customerNote
-      );
+      const response = await fetch(`/api/customer/shipment/${encodeURIComponent(token)}/reschedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          new_date: selectedDate,
+          new_from: selectedSlot.from,
+          new_to: selectedSlot.to,
+          note: customerNote,
+        }),
+      });
 
-      if (res.success && res.order) {
-        setOrder(res.order);
+      const res = await response.json();
+
+      if (response.ok && res.success && res.shipment) {
+        setShipment(res.shipment);
         setActiveTab('details');
         setSuccessNotice(
           isAr
-            ? 'تم إرسال طلب تعديل الموعد بنجاح! سيتم التنسيق معك وفق الموعد الجديد.'
-            : 'Reschedule request submitted successfully!'
+            ? `تم تسجيل طلبك بتعديل الموعد إلى ${selectedDate} بنجاح!`
+            : `Reschedule request for ${selectedDate} saved!`
         );
       } else {
-        alert(res.error || 'حدث خطأ أثناء إرسال طلب التعديل');
+        // Fallback
+        const fbRes = await db.customerRescheduleDelivery(token, selectedDate, selectedSlot.from, selectedSlot.to, customerNote);
+        if (fbRes.success) {
+          loadShipment();
+          setActiveTab('details');
+          setSuccessNotice(isAr ? 'تم تعديل الموعد بنجاح!' : 'Rescheduled successfully!');
+        } else {
+          alert(res.error || fbRes.error || 'حدث خطأ أثناء تعديل الموعد');
+        }
       }
     } catch (e: any) {
       alert(e.message || 'حدث خطأ غير متوقع');
@@ -153,21 +291,39 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
     }
   };
 
-  // Handle Cancel Delivery
+  // Action: Cancel Delivery
   const handleCancel = async () => {
     if (!token || isSubmitting) return;
     setIsSubmitting(true);
     setSuccessNotice(null);
 
+    const finalReason = cancelReasonCustom.trim() || cancelReasonPreset;
+
     try {
-      const res = await db.customerCancelDelivery(token);
-      if (res.success && res.order) {
-        setOrder(res.order);
+      const response = await fetch(`/api/customer/shipment/${encodeURIComponent(token)}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: finalReason }),
+      });
+
+      const res = await response.json();
+
+      if (response.ok && res.success && res.shipment) {
+        setShipment(res.shipment);
         setShowCancelModal(false);
         setActiveTab('details');
         setSuccessNotice(isAr ? 'تم إلغاء الشحنة بناءً على طلبك.' : 'Shipment cancelled upon your request.');
       } else {
-        alert(res.error || 'حدث خطأ أثناء إلغاء الشحنة');
+        // Fallback
+        const fbRes = await db.customerCancelDelivery(token);
+        if (fbRes.success) {
+          loadShipment();
+          setShowCancelModal(false);
+          setActiveTab('details');
+          setSuccessNotice(isAr ? 'تم إلغاء الشحنة بنجاح.' : 'Cancelled successfully.');
+        } else {
+          alert(res.error || fbRes.error || 'حدث خطأ أثناء إلغاء الشحنة');
+        }
       }
     } catch (e: any) {
       alert(e.message || 'حدث خطأ غير متوقع');
@@ -183,217 +339,244 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
     { labelAr: 'مساءً (04:00 م - 08:00 م)', labelEn: 'Evening (04:00 PM - 08:00 PM)', from: '16:00', to: '20:00' },
   ];
 
+  const cancelReasons = [
+    { id: '1', labelAr: 'تغيير في الخطط أو الميزانية', labelEn: 'Change in plans or budget' },
+    { id: '2', labelAr: 'تأخر موعد استلام الطلب', labelEn: 'Delivery took too long' },
+    { id: '3', labelAr: 'طلب مكرر أو بالخطأ', labelEn: 'Duplicate or accidental order' },
+    { id: '4', labelAr: 'غير متواجد في العنوان حالياً', labelEn: 'Away from delivery address' },
+    { id: '5', labelAr: 'سبب آخر', labelEn: 'Other reason' },
+  ];
+
+  // 1. Loading Skeleton Screen
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4" dir={isAr ? 'rtl' : 'ltr'}>
-        <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center shadow-lg border border-slate-200">
+        <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-lg border border-slate-200/80">
           <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <h3 className="font-bold text-slate-800 text-lg mb-1">{isAr ? 'جاري تجهيز بيانات الشحنة...' : 'Loading shipment details...'}</h3>
-          <p className="text-slate-500 text-sm">{isAr ? 'يرجى الانتظار لحظات' : 'Please wait a moment'}</p>
+          <h3 className="font-bold text-slate-900 text-lg mb-1">{isAr ? 'جاري تحميل بيانات شحنتك...' : 'Loading shipment details...'}</h3>
+          <p className="text-slate-500 text-xs">{isAr ? 'يرجى الانتظار لحظة واحدة' : 'Please wait a moment'}</p>
         </div>
       </div>
     );
   }
 
-  if (errorMessage || !order) {
+  // 2. Error / Expired / Not Found Screen
+  if (errorCode || !shipment) {
+    const isExpired = errorCode === 'EXPIRED';
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4" dir={isAr ? 'rtl' : 'ltr'}>
-        <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-lg border border-slate-200">
-          <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
-            <AlertCircle className="w-8 h-8" />
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-xl border border-slate-200/80">
+          <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${
+            isExpired ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'
+          }`}>
+            {isExpired ? <Clock3 className="w-8 h-8" /> : <AlertCircle className="w-8 h-8" />}
           </div>
-          <h2 className="text-xl font-bold text-slate-900 mb-2">{isAr ? 'تعذر العثور على الشحنة' : 'Shipment Not Found'}</h2>
+          <h2 className="text-xl font-bold text-slate-900 mb-2">
+            {isExpired
+              ? (isAr ? 'انتهت صلاحية الرابط' : 'Link Expired')
+              : (isAr ? 'تعذر العثور على الشحنة' : 'Shipment Not Found')}
+          </h2>
           <p className="text-slate-600 text-sm mb-6 leading-relaxed">
-            {errorMessage || (isAr ? 'الرابط الذي قمت بفتحه غير صحيح أو تم تحديثه.' : 'The link is invalid or expired.')}
+            {errorMessage || (isAr ? 'الرابط الذي قمت بفتحه غير صحيح أو انتهت صلاحيته.' : 'The link is invalid or has expired.')}
           </p>
-          <button
-            onClick={() => navigate('/')}
-            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-3 rounded-xl transition shadow-sm text-sm"
-          >
-            {isAr ? 'العودة للصفحة الرئيسية' : 'Return to Home'}
-          </button>
+
+          <div className="space-y-2">
+            <button
+              onClick={() => window.location.reload()}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition shadow-sm text-sm flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>{isAr ? 'إعادة المحاولة' : 'Retry'}</span>
+            </button>
+            <button
+              onClick={() => navigate('/')}
+              className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-3 rounded-xl transition text-sm cursor-pointer"
+            >
+              {isAr ? 'العودة للصفحة الرئيسية' : 'Return to Home'}
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
-  const isConfirmed = order.customer_response_status === 'confirmed';
-  const isRescheduled = order.customer_response_status === 'reschedule_requested';
-  const isCustomerCancelled = order.customer_response_status === 'cancelled' || order.status === 'cancelled';
-  const isDelivered = order.status === 'delivered';
+  const isConfirmed = shipment.customer_response_status === 'confirmed';
+  const isRescheduled = shipment.customer_response_status === 'reschedule_requested';
+  const isCustomerCancelled = shipment.customer_response_status === 'cancelled' || shipment.status === 'cancelled';
+  const isDelivered = shipment.status === 'delivered';
 
   return (
-    <div className="min-h-screen bg-slate-100/80 text-slate-800 pb-12" dir={isAr ? 'rtl' : 'ltr'}>
-      {/* Top Navigation & Branding Bar */}
+    <div className="min-h-screen bg-slate-100/90 text-slate-800 pb-16 selection:bg-blue-600 selection:text-white" dir={isAr ? 'rtl' : 'ltr'}>
+      {/* Sticky Branding Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-2xl mx-auto px-4 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm font-bold text-lg">
-              {company?.name ? company.name.charAt(0) : 'D'}
+            <div className="w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center text-white font-black text-lg shadow-sm">
+              {shipment.company?.name ? shipment.company.name.charAt(0) : 'D'}
             </div>
             <div>
               <div className="flex items-center gap-1.5">
                 <h1 className="font-bold text-slate-900 text-base leading-tight">
-                  {company?.name || 'Delixa Logistics'}
+                  {shipment.company?.name || 'Delixa Logistics'}
                 </h1>
-                <span title="شركة موثقة">
+                <span title="خدمة توصيل موثقة">
                   <ShieldCheck className="w-4 h-4 text-emerald-600" />
                 </span>
               </div>
-              <p className="text-xs text-slate-500">{isAr ? 'خدمات الشحن والتوصيل السريع' : 'Fast Delivery Services'}</p>
+              <p className="text-xs text-slate-500 font-medium">{isAr ? 'تأكيد واستلام الشحنات السريعة' : 'Shipment Confirmation Portal'}</p>
             </div>
           </div>
 
           {/* Language Toggle */}
           <button
             onClick={() => setLang(lang === 'ar' ? 'en' : 'ar')}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 transition shadow-2xs"
+            className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 bg-slate-50 hover:bg-slate-100 transition cursor-pointer"
           >
             {lang === 'ar' ? 'English' : 'عربي'}
           </button>
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="max-w-2xl mx-auto px-4 pt-6 space-y-4">
-        {/* Success Notice Banner */}
+      {/* Main Content Area */}
+      <main className="max-w-2xl mx-auto px-4 pt-5 space-y-4">
+        {/* Dynamic Success Alert Banner */}
         {successNotice && (
-          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-start gap-3 shadow-sm animate-fade-in">
+          <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-2xl p-4 flex items-start gap-3 shadow-xs animate-fade-in">
             <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-            <div className="text-sm font-medium">{successNotice}</div>
+            <div className="text-sm font-bold leading-relaxed">{successNotice}</div>
           </div>
         )}
 
-        {/* Dynamic Status Notification Card */}
-        <div className={`rounded-2xl p-5 border shadow-sm ${
+        {/* Dynamic State Banner */}
+        <div className={`rounded-3xl p-5 border shadow-sm transition-all ${
           isDelivered
-            ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+            ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
             : isConfirmed
-            ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+            ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
             : isRescheduled
-            ? 'bg-amber-50 border-amber-200 text-amber-950'
+            ? 'bg-amber-50 border-amber-300 text-amber-950'
             : isCustomerCancelled
-            ? 'bg-rose-50 border-rose-200 text-rose-950'
+            ? 'bg-rose-50 border-rose-300 text-rose-950'
             : 'bg-blue-50 border-blue-200 text-blue-950'
         }`}>
           <div className="flex items-start gap-3.5">
-            <div className="mt-0.5">
-              {isDelivered && <CheckCircle2 className="w-6 h-6 text-emerald-600" />}
-              {!isDelivered && isConfirmed && <CheckCircle2 className="w-6 h-6 text-emerald-600" />}
-              {!isDelivered && isRescheduled && <CalendarClock className="w-6 h-6 text-amber-600" />}
-              {!isDelivered && isCustomerCancelled && <XCircle className="w-6 h-6 text-rose-600" />}
+            <div className="mt-0.5 shrink-0">
+              {isDelivered && <CheckCircle2 className="w-7 h-7 text-emerald-600" />}
+              {!isDelivered && isConfirmed && <CheckCircle2 className="w-7 h-7 text-emerald-600" />}
+              {!isDelivered && isRescheduled && <CalendarClock className="w-7 h-7 text-amber-600" />}
+              {!isDelivered && isCustomerCancelled && <XCircle className="w-7 h-7 text-rose-600" />}
               {!isDelivered && !isConfirmed && !isRescheduled && !isCustomerCancelled && (
-                <Clock className="w-6 h-6 text-blue-600 animate-pulse" />
+                <Clock className="w-7 h-7 text-blue-600 animate-pulse" />
               )}
             </div>
             <div className="flex-1">
-              <h2 className="font-bold text-base mb-1">
+              <h2 className="font-extrabold text-base mb-1">
                 {isDelivered
-                  ? (isAr ? 'تم تسليم الشحنة بنجاح' : 'Shipment Delivered')
+                  ? (isAr ? 'تم تسليم الشحنة بنجاح' : 'Shipment Delivered Successfully')
                   : isConfirmed
-                  ? (isAr ? 'تم تأكيد موعد استلام شحنتك بنجاح' : 'Delivery Confirmed by Customer')
+                  ? (isAr ? 'تم تأكيد موعد استلام شحنتك' : 'Delivery Confirmed by Customer')
                   : isRescheduled
                   ? (isAr ? 'تم تسجيل طلب تعديل موعد التوصيل' : 'Reschedule Requested')
                   : isCustomerCancelled
                   ? (isAr ? 'تم إلغاء الشحنة' : 'Shipment Cancelled')
-                  : (isAr ? 'يرجى تأكيد موعد استلام شحنتك' : 'Please Confirm Delivery Schedule')}
+                  : (isAr ? 'يرجى تأكيد موعد استلام شحنتك اليوم' : 'Please Confirm Delivery Schedule')}
               </h2>
-              <p className="text-sm leading-relaxed opacity-90">
+              <p className="text-xs sm:text-sm leading-relaxed opacity-95">
                 {isDelivered
-                  ? (isAr ? 'نتمنى أن تكون تجربتك مميزة. شكراً لثقتكم بنا وبمتجر الشريك.' : 'Thank you for receiving your shipment with us.')
+                  ? (isAr ? 'نتمنى أن تكون تجربتك ممتازة. شكراً لثقتكم بنا وبالمتجر.' : 'Thank you for receiving your order with us.')
                   : isConfirmed
-                  ? (isAr ? `مندوبنا في طريقه إليك في الموعد المحدد (${order.delivery_date} بين ${order.delivery_from} و ${order.delivery_to}). يرجى التأكد من التواجد وتجهيز المبلغ.` : `Our courier will deliver your package on ${order.delivery_date} between ${order.delivery_from} and ${order.delivery_to}.`)
+                  ? (isAr ? `مندوبنا سيتواصل معك للتسليم في الموعد المحدد (${shipment.delivery_date} بين ${shipment.delivery_from} و ${shipment.delivery_to}). يرجى التأكد من التواجد وتجهيز المبلغ المطلوب.` : `Our courier will deliver on ${shipment.delivery_date} between ${shipment.delivery_from} and ${shipment.delivery_to}.`)
                   : isRescheduled
-                  ? (isAr ? `تاريخ التوصيل المطلوب الجديد: (${order.customer_selected_date || selectedDate} بين ${order.customer_selected_from || '12:00'} و ${order.customer_selected_to || '16:00'}). سيتم التنسيق معك وتحديث خط السير.` : `Requested new delivery date: ${order.customer_selected_date}. Our dispatch team is updating your route.`)
+                  ? (isAr ? `الموعد الجديد المطلوب: (${shipment.customer_selected_date || selectedDate} بين ${shipment.customer_selected_from || '12:00'} و ${shipment.customer_selected_to || '16:00'}). سيتم التنسيق معك وتحديث خط السير.` : `Requested date: ${shipment.customer_selected_date}. Dispatch route updated.`)
                   : isCustomerCancelled
-                  ? (isAr ? 'تم تسجيل إلغاء الطلب في نظام الشحن. إذا كان هذا عن طريق الخطأ، يرجى التواصل مع خدمة العملاء.' : 'Order has been cancelled. Contact support if this was an error.')
-                  : (isAr ? 'لضمان وصول المندوب في الوقت الأنسب لك وبدون أي تأخير، يرجى الضغط على زر تأكيد الاستلام أدناه أو اختيار موعد آخر.' : 'Please confirm your availability to receive your order during the scheduled delivery window.')}
+                  ? (isAr ? `تم تسجيل إلغاء الطلب في النظام.${shipment.customer_cancellation_reason ? ` (السبب: ${shipment.customer_cancellation_reason})` : ''}` : 'Order has been cancelled.')
+                  : (isAr ? 'لضمان وصول المندوب في الوقت الأنسب لك وبدون أي تأخير، يرجى تأكيد الموعد بالضغط على الزر الأخضر أدناه.' : 'Please confirm your availability to receive your order during the scheduled delivery window.')}
               </p>
             </div>
           </div>
         </div>
 
         {/* Primary Shipment Card */}
-        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
-          {/* Header of Card */}
-          <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex flex-wrap items-center justify-between gap-2">
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+          {/* Order Header & Store Tag */}
+          <div className="p-5 border-b border-slate-100 bg-slate-50/60 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <span className="text-xs font-semibold text-slate-500 block mb-0.5">{isAr ? 'رقم الشحنة' : 'Order Tracking'}</span>
-              <span className="font-mono font-bold text-slate-900 text-lg">{order.order_number}</span>
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-0.5">{isAr ? 'رقم الشحنة' : 'Order Tracking'}</span>
+              <span className="font-mono font-black text-slate-900 text-lg">#{shipment.order_number}</span>
             </div>
 
-            {merchant && (
+            {shipment.merchant && (
               <div className="text-end">
-                <span className="text-xs font-semibold text-slate-500 block mb-0.5">{isAr ? 'مرسل من متجر' : 'Shipped from'}</span>
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-blue-800 border border-blue-100 rounded-full font-bold text-xs">
-                  <Building2 className="w-3.5 h-3.5 text-blue-600" />
-                  {merchant.store_name}
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-0.5">{isAr ? 'مرسل من متجر' : 'Store'}</span>
+                <span className="inline-flex items-center gap-1.5 px-3.5 py-1 bg-blue-50 text-blue-900 border border-blue-200 rounded-full font-bold text-xs">
+                  <Store className="w-3.5 h-3.5 text-blue-600" />
+                  {shipment.merchant.store_name}
                 </span>
               </div>
             )}
           </div>
 
           {/* COD Payment Highlight */}
-          <div className="p-5 bg-gradient-to-r from-emerald-50/70 via-white to-blue-50/40 border-b border-slate-100">
+          <div className="p-5 bg-gradient-to-r from-emerald-50 via-white to-blue-50/30 border-b border-slate-100">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shadow-xs">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
                   <DollarSign className="w-6 h-6" />
                 </div>
                 <div>
-                  <span className="text-xs font-bold text-emerald-900 block">{isAr ? 'المطلوب دفعه عند الاستلام (COD)' : 'Cash on Delivery Amount'}</span>
+                  <span className="text-xs font-bold text-emerald-950 block">{isAr ? 'المطلوب تحصيله عند الاستلام (COD)' : 'Cash on Delivery Amount'}</span>
                   <span className="text-xs text-slate-500">{isAr ? 'الدفع نقداً للمندوب عند تسليم الشحنة' : 'Pay cash to courier upon delivery'}</span>
                 </div>
               </div>
               <div className="text-end">
-                <span className="text-2xl font-black text-emerald-700 tracking-tight">{Number(order.cod_amount).toFixed(2)}</span>
+                <span className="text-2xl sm:text-3xl font-black text-emerald-700 tracking-tight">{Number(shipment.cod_amount).toFixed(2)}</span>
                 <span className="text-xs font-bold text-emerald-800 ms-1">{isAr ? 'ج.م' : 'EGP'}</span>
               </div>
             </div>
           </div>
 
-          {/* Scheduled Delivery Window Info */}
+          {/* Delivery Schedule Info */}
           <div className="p-5 border-b border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0 mt-0.5">
+              <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
                 <Calendar className="w-5 h-5" />
               </div>
               <div>
-                <span className="text-xs font-medium text-slate-500 block">{isAr ? 'تاريخ التوصيل المجدول' : 'Scheduled Delivery Date'}</span>
+                <span className="text-xs font-medium text-slate-500 block">{isAr ? 'تاريخ التوصيل المجدول' : 'Delivery Date'}</span>
                 <span className="font-bold text-slate-900 text-sm">
-                  {order.delivery_date || todayStr} {order.delivery_date === todayStr ? (isAr ? '(اليوم)' : '(Today)') : ''}
+                  {shipment.delivery_date || todayStr} {shipment.delivery_date === todayStr ? (isAr ? '(اليوم)' : '(Today)') : ''}
                 </span>
               </div>
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0 mt-0.5">
+              <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
                 <Clock className="w-5 h-5" />
               </div>
               <div>
-                <span className="text-xs font-medium text-slate-500 block">{isAr ? 'نافذة وقت الوصول المتوقع' : 'Estimated Arrival Window'}</span>
+                <span className="text-xs font-medium text-slate-500 block">{isAr ? 'نافذة وقت الوصول المتوقع' : 'Delivery Window'}</span>
                 <span className="font-bold text-slate-900 text-sm" dir="ltr">
-                  {order.delivery_from} - {order.delivery_to}
+                  {shipment.delivery_from || '12:00'} - {shipment.delivery_to || '16:00'}
                 </span>
               </div>
             </div>
           </div>
 
           {/* Customer Address Details */}
-          <div className="p-5 space-y-3">
+          <div className="p-5 space-y-2">
             <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0 mt-0.5">
+              <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
                 <MapPin className="w-5 h-5" />
               </div>
               <div className="flex-1">
                 <span className="text-xs font-medium text-slate-500 block">{isAr ? 'عنوان ومكان الاستلام' : 'Delivery Address'}</span>
-                <p className="font-bold text-slate-900 text-sm leading-snug">{order.customer_address}</p>
-                <div className="flex flex-wrap items-center gap-2 mt-1.5 text-xs text-slate-600">
-                  {order.city_area && <span className="px-2 py-0.5 bg-slate-100 rounded-md">{order.city_area}</span>}
-                  {order.governorate && <span className="px-2 py-0.5 bg-slate-100 rounded-md">{order.governorate}</span>}
-                  {order.customer_landmark && (
-                    <span className="text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md">
-                      {isAr ? 'علامة مميزة:' : 'Landmark:'} {order.customer_landmark}
+                <p className="font-bold text-slate-900 text-sm leading-snug">{shipment.customer_address}</p>
+                <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-slate-600">
+                  {shipment.city_area && <span className="px-2.5 py-0.5 bg-slate-100 font-semibold rounded-lg">{shipment.city_area}</span>}
+                  {shipment.governorate && <span className="px-2.5 py-0.5 bg-slate-100 font-semibold rounded-lg">{shipment.governorate}</span>}
+                  {shipment.customer_landmark && (
+                    <span className="text-amber-900 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-lg font-medium">
+                      {isAr ? 'علامة مميزة:' : 'Landmark:'} {shipment.customer_landmark}
                     </span>
                   )}
                 </div>
@@ -402,32 +585,37 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
           </div>
         </div>
 
-        {/* Customer Action Choices (If Not Delivered & Not Cancelled) */}
+        {/* Action Controls Area (Active when not delivered and not cancelled) */}
         {!isDelivered && !isCustomerCancelled && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5 space-y-4">
             <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-blue-600" />
-              {isAr ? 'إجراءات العميل لتأكيد الشحنة' : 'Customer Actions'}
+              {isAr ? 'خيارات العميل لتأكيد الشحنة' : 'Customer Actions'}
             </h3>
 
-            {/* Quick One-Click Confirmation Button */}
+            {/* Quick Confirm Button */}
             {!isConfirmed && activeTab === 'details' && (
               <button
-                id="btn-customer-confirm"
+                id="btn-customer-confirm-main"
+                type="button"
                 onClick={handleConfirm}
                 disabled={isSubmitting}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold py-3.5 px-4 rounded-xl transition shadow-md flex items-center justify-center gap-2 text-base cursor-pointer disabled:opacity-50"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-extrabold py-4 px-4 rounded-2xl transition shadow-md flex items-center justify-center gap-2.5 text-base cursor-pointer disabled:opacity-50"
               >
                 <CheckCircle2 className="w-5 h-5" />
-                {isSubmitting ? (isAr ? 'جاري التأكيد...' : 'Confirming...') : (isAr ? 'تأكيد استلام الشحنة في الموعد المحدد' : 'Confirm Delivery in Scheduled Window')}
+                {isSubmitting
+                  ? (isAr ? 'جاري تأكيد الشحنة...' : 'Confirming...')
+                  : (isAr ? 'تأكيد استلام الشحنة في الموعد المحدد' : 'Confirm Delivery in Scheduled Window')}
               </button>
             )}
 
-            {/* Options Navigation Tabs */}
-            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+            {/* Action Tabs Grid */}
+            <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-slate-100">
               <button
+                id="btn-toggle-reschedule"
+                type="button"
                 onClick={() => setActiveTab(activeTab === 'reschedule' ? 'details' : 'reschedule')}
-                className={`py-2.5 px-3 rounded-xl font-medium text-xs sm:text-sm flex items-center justify-center gap-2 transition ${
+                className={`py-3 px-3 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition cursor-pointer ${
                   activeTab === 'reschedule'
                     ? 'bg-blue-600 text-white shadow-xs'
                     : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200'
@@ -438,8 +626,10 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
               </button>
 
               <button
+                id="btn-open-cancel-modal"
+                type="button"
                 onClick={() => setShowCancelModal(true)}
-                className="py-2.5 px-3 rounded-xl font-medium text-xs sm:text-sm bg-slate-50 hover:bg-red-50 text-slate-700 hover:text-red-700 border border-slate-200 hover:border-red-200 flex items-center justify-center gap-2 transition"
+                className="py-3 px-3 rounded-2xl font-bold text-xs sm:text-sm bg-slate-50 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-200 hover:border-rose-200 flex items-center justify-center gap-2 transition cursor-pointer"
               >
                 <XCircle className="w-4 h-4" />
                 {isAr ? 'طلب إلغاء الشحنة' : 'Cancel Order'}
@@ -448,33 +638,33 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
 
             {/* Reschedule Drawer / Form */}
             {activeTab === 'reschedule' && (
-              <form onSubmit={handleReschedule} className="mt-4 p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-4 animate-fade-in">
+              <form onSubmit={handleReschedule} className="mt-4 p-4.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-4 animate-fade-in">
                 <div className="flex items-center justify-between">
                   <h4 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
                     <CalendarCheck2 className="w-4 h-4 text-blue-600" />
-                    {isAr ? 'حدد موعد التوصيل المناسب لك' : 'Select your preferred delivery time'}
+                    {isAr ? 'حدد موعد التوصيل الجديد المناسب لك' : 'Select your preferred delivery time'}
                   </h4>
                   <button
                     type="button"
                     onClick={() => setActiveTab('details')}
-                    className="text-xs text-slate-500 hover:text-slate-800"
+                    className="text-xs text-slate-500 hover:text-slate-800 font-medium cursor-pointer"
                   >
-                    {isAr ? 'إلغاء' : 'Close'}
+                    {isAr ? 'إغلاق' : 'Close'}
                   </button>
                 </div>
 
-                {/* Date Selection Shortcuts */}
+                {/* Day Selection */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-2">
-                    {isAr ? 'اختر اليوم المفضل:' : 'Select Day:'}
+                  <label className="block text-xs font-bold text-slate-700 mb-2">
+                    {isAr ? 'اختر اليوم المناسب:' : 'Select Day:'}
                   </label>
                   <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
                       onClick={() => setSelectedDate(todayStr)}
-                      className={`py-2 px-2 rounded-lg text-xs font-bold border text-center transition ${
+                      className={`py-2.5 px-2 rounded-xl text-xs font-bold border text-center transition cursor-pointer ${
                         selectedDate === todayStr
-                          ? 'bg-blue-600 text-white border-blue-600'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                           : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                       }`}
                     >
@@ -484,9 +674,9 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
                     <button
                       type="button"
                       onClick={() => setSelectedDate(tomorrowStr)}
-                      className={`py-2 px-2 rounded-lg text-xs font-bold border text-center transition ${
+                      className={`py-2.5 px-2 rounded-xl text-xs font-bold border text-center transition cursor-pointer ${
                         selectedDate === tomorrowStr
-                          ? 'bg-blue-600 text-white border-blue-600'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                           : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                       }`}
                     >
@@ -496,9 +686,9 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
                     <button
                       type="button"
                       onClick={() => setSelectedDate(afterTomorrowStr)}
-                      className={`py-2 px-2 rounded-lg text-xs font-bold border text-center transition ${
+                      className={`py-2.5 px-2 rounded-xl text-xs font-bold border text-center transition cursor-pointer ${
                         selectedDate === afterTomorrowStr
-                          ? 'bg-blue-600 text-white border-blue-600'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                           : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                       }`}
                     >
@@ -506,19 +696,18 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
                     </button>
                   </div>
 
-                  {/* Manual Date Input */}
                   <input
                     type="date"
                     min={todayStr}
                     value={selectedDate}
                     onChange={(e) => setSelectedDate(e.target.value)}
-                    className="w-full mt-2 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-medium text-slate-800"
+                    className="w-full mt-2.5 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-800"
                   />
                 </div>
 
-                {/* Time Slot Selection */}
+                {/* Time Slots */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-2">
                     {isAr ? 'اختر الفترة الزمنية المناسبة:' : 'Select Time Window:'}
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -529,9 +718,9 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
                           key={index}
                           type="button"
                           onClick={() => setSelectedSlot({ from: slot.from, to: slot.to })}
-                          className={`p-2.5 rounded-lg border text-start transition flex items-center justify-between text-xs ${
+                          className={`p-3 rounded-xl border text-start transition flex items-center justify-between text-xs cursor-pointer ${
                             isSelected
-                              ? 'bg-blue-50 border-blue-600 text-blue-900 font-bold'
+                              ? 'bg-blue-50 border-blue-600 text-blue-950 font-bold'
                               : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                           }`}
                         >
@@ -543,17 +732,17 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
                   </div>
                 </div>
 
-                {/* Customer Preference Note */}
+                {/* Customer Note */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    {isAr ? 'ملاحظة للمندوب أو خدمة العملاء (اختياري):' : 'Note for Courier / Support (Optional):'}
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    {isAr ? 'ملاحظة لمندوب الشحن (اختياري):' : 'Note for Courier (Optional):'}
                   </label>
                   <textarea
                     rows={2}
                     value={customerNote}
                     onChange={(e) => setCustomerNote(e.target.value)}
-                    placeholder={isAr ? 'مثال: يرجى الاتصال بي قبل الوصول بـ 15 دقيقة، أو التسليم لشخص آخر...' : 'e.g., Call me 15 mins before arrival...'}
-                    className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                    placeholder={isAr ? 'مثال: يرجى الاتصال بي قبل الوصول بـ 15 دقيقة...' : 'e.g., Please call 15 minutes before arrival...'}
+                    className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
@@ -561,63 +750,64 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm transition shadow-xs flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3 px-4 rounded-xl text-xs sm:text-sm transition shadow-xs flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   <Send className="w-4 h-4" />
-                  {isSubmitting ? (isAr ? 'جاري إرسال الطلب...' : 'Submitting...') : (isAr ? 'إرسال طلب تعديل الموعد' : 'Save New Schedule')}
+                  {isSubmitting ? (isAr ? 'جاري إرسال التعديل...' : 'Submitting...') : (isAr ? 'حفظ وإرسال الموعد الجديد' : 'Save & Submit New Schedule')}
                 </button>
               </form>
             )}
           </div>
         )}
 
-        {/* Company Support & Contact Card */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm text-center space-y-3">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-            {isAr ? 'هل تحتاج لمساعدة بخصوص شحنتك؟' : 'Need help with your delivery?'}
+        {/* Company & Support Contact Card */}
+        <div className="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm text-center space-y-3">
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center justify-center gap-1.5">
+            <HelpCircle className="w-4 h-4 text-blue-600" />
+            {isAr ? 'هل تحتاج لمساعدة بخصوص شحنتك؟' : 'Need Help with Your Delivery?'}
           </h4>
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
             {isAr
-              ? `فريق خدمة عملاء ${company?.name || 'Delixa'} جاهز للرد على استفساراتك.`
-              : 'Our customer support team is here to assist you.'}
+              ? `فريق خدمة عملاء ${shipment.company?.name || 'شركة الشحن'} جاهز لمساعدتك في أي وقت.`
+              : 'Our customer support team is available to help.'}
           </p>
 
-          <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
-            {company?.phone && (
+          <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+            {shipment.company?.phone && (
               <a
-                href={`tel:${company.phone}`}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 rounded-xl text-xs font-bold transition shadow-2xs"
+                href={`tel:${shipment.company.phone}`}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 rounded-xl text-xs font-bold transition shadow-2xs"
               >
                 <Phone className="w-3.5 h-3.5 text-blue-600" />
-                <span>{company.phone}</span>
+                <span>{shipment.company.phone}</span>
               </a>
             )}
 
-            {company?.phone && (
+            {shipment.company?.phone && (
               <a
-                href={`https://wa.me/2${company.phone.replace(/[^0-9]/g, '')}`}
+                href={`https://wa.me/2${shipment.company.phone.replace(/[^0-9]/g, '')}`}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition shadow-2xs"
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-xl text-xs font-bold transition shadow-2xs"
               >
                 <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{isAr ? 'محادثة واتساب' : 'WhatsApp Chat'}</span>
+                <span>{isAr ? 'محادثة واتساب' : 'WhatsApp Support'}</span>
               </a>
             )}
           </div>
         </div>
 
-        {/* Footer */}
-        <footer className="text-center pt-4 text-xs text-slate-400">
-          <p>Delixa Last-Mile Delivery Platform &bull; {new Date().getFullYear()}</p>
+        {/* Safe Secure Footer */}
+        <footer className="text-center pt-2 text-xs text-slate-400">
+          <p>Delixa Last-Mile Logistics Platform &bull; {new Date().getFullYear()}</p>
         </footer>
       </main>
 
-      {/* Confirmation Modal for Order Cancellation */}
+      {/* Cancellation Confirmation Modal */}
       {showCancelModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 text-center space-y-4 animate-scale-in">
-            <div className="w-14 h-14 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 text-center space-y-4 animate-scale-in">
+            <div className="w-14 h-14 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mx-auto">
               <XCircle className="w-8 h-8" />
             </div>
 
@@ -625,27 +815,61 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
               <h3 className="font-bold text-slate-900 text-lg mb-1">{isAr ? 'تأكيد إلغاء الشحنة' : 'Confirm Order Cancellation'}</h3>
               <p className="text-xs text-slate-600 leading-relaxed">
                 {isAr
-                  ? 'هل أنت متأكد من رغبتك في إلغاء هذه الشحنة؟ سيتم إشعار متجر التاجر ومندوب التوصيل بالإلغاء.'
-                  : 'Are you sure you want to cancel this delivery? The merchant and courier will be notified.'}
+                  ? 'يرجى اختيار سبب الإلغاء لإشعار المتجر ومندوب الشحن.'
+                  : 'Please select a cancellation reason for the merchant and courier.'}
               </p>
             </div>
+
+            {/* Cancel Reasons Selection */}
+            <div className="text-start space-y-1.5 max-h-48 overflow-y-auto pr-1">
+              {cancelReasons.map((r) => (
+                <label
+                  key={r.id}
+                  onClick={() => setCancelReasonPreset(r.labelAr)}
+                  className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-xs cursor-pointer transition ${
+                    cancelReasonPreset === r.labelAr
+                      ? 'bg-rose-50 border-rose-300 text-rose-950 font-bold'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="cancel_reason"
+                    checked={cancelReasonPreset === r.labelAr}
+                    onChange={() => setCancelReasonPreset(r.labelAr)}
+                    className="text-rose-600 focus:ring-rose-500"
+                  />
+                  <span>{isAr ? r.labelAr : r.labelEn}</span>
+                </label>
+              ))}
+            </div>
+
+            {cancelReasonPreset === 'سبب آخر' && (
+              <input
+                type="text"
+                value={cancelReasonCustom}
+                onChange={(e) => setCancelReasonCustom(e.target.value)}
+                placeholder={isAr ? 'اكتب سبب الإلغاء هنا...' : 'Type reason here...'}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800"
+              />
+            )}
 
             <div className="flex gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setShowCancelModal(false)}
-                className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition"
+                className="flex-1 py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition cursor-pointer"
               >
-                {isAr ? 'تراجع' : 'No, Keep It'}
+                {isAr ? 'تراجع' : 'Keep Order'}
               </button>
 
               <button
                 type="button"
                 onClick={handleCancel}
                 disabled={isSubmitting}
-                className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs transition shadow-sm disabled:opacity-50"
+                className="flex-1 py-3 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs transition shadow-sm disabled:opacity-50 cursor-pointer"
               >
-                {isSubmitting ? (isAr ? 'جاري الإلغاء...' : 'Cancelling...') : (isAr ? 'نعم، إلغاء الشحنة' : 'Yes, Cancel')}
+                {isSubmitting ? (isAr ? 'جاري الإلغاء...' : 'Cancelling...') : (isAr ? 'تأكيد الإلغاء' : 'Yes, Cancel')}
               </button>
             </div>
           </div>
