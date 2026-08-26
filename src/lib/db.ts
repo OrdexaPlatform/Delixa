@@ -1032,6 +1032,7 @@ const supabaseDb = {
       actorRole?: 'admin' | 'courier' | 'customer';
       failureReason?: DeliveryFailureReason | string;
       failureNotes?: string;
+      notes?: string;
       cancellationSource?: 'admin' | 'courier' | 'customer' | 'merchant';
     }
   ): Promise<Order | null> {
@@ -1071,17 +1072,22 @@ const supabaseDb = {
         created_by: options?.actorName || 'نظام التوصيل',
       }).catch(err => console.warn('Transaction record warning:', err));
     } else if (newStatus === 'failed') {
+      const failureNoteText = options?.failureNotes || options?.notes || null;
       updates.failed_at = new Date().toISOString();
       updates.failed_by = options?.actorName || 'مندوب التوصيل';
       updates.failure_reason = options?.failureReason || 'other';
-      updates.failure_notes = options?.failureNotes || null;
-      updates.failure_note = options?.failureNotes || null;
+      updates.failure_notes = failureNoteText;
+      updates.failure_note = failureNoteText;
     } else if (newStatus === 'cancelled') {
       updates.cancellation_timestamp = new Date().toISOString();
       updates.cancellation_source = options?.cancellationSource || 'admin';
     }
 
-    const { data: updated, error } = await supabase
+    let updated: any = null;
+    let updateError: any = null;
+
+    // 1. Primary update attempt
+    const attempt = await supabase
       .from('orders')
       .update(updates)
       .eq('id', orderId)
@@ -1089,20 +1095,67 @@ const supabaseDb = {
       .select()
       .single();
 
-    if (error || !updated) throw new Error(error?.message || 'فشل تحديث حالة الشحنة');
+    if (attempt.error) {
+      const errMsg = attempt.error.message || '';
+      // PostgREST Schema Cache fallback: if a specific column is missing from remote cache
+      if (errMsg.includes("Could not find the '") || errMsg.includes("column of 'orders' in the schema cache")) {
+        console.warn('PostgREST schema cache mismatch detected, executing compatible fallback retry:', errMsg);
+        const fallbackUpdates = { ...updates };
 
-    // Audit Event
+        if (errMsg.includes("'failure_note'")) {
+          delete fallbackUpdates.failure_note;
+        }
+        if (errMsg.includes("'failure_notes'")) {
+          delete fallbackUpdates.failure_notes;
+        }
+        if (errMsg.includes("'failed_by'")) {
+          delete fallbackUpdates.failed_by;
+        }
+        if (errMsg.includes("'failed_at'")) {
+          delete fallbackUpdates.failed_at;
+        }
+        if (errMsg.includes("'failure_reason'")) {
+          delete fallbackUpdates.failure_reason;
+        }
+
+        const retryAttempt = await supabase
+          .from('orders')
+          .update(fallbackUpdates)
+          .eq('id', orderId)
+          .eq('company_id', companyId)
+          .select()
+          .single();
+
+        if (!retryAttempt.error && retryAttempt.data) {
+          updated = retryAttempt.data;
+        } else {
+          updateError = retryAttempt.error;
+        }
+      } else {
+        updateError = attempt.error;
+      }
+    } else {
+      updated = attempt.data;
+    }
+
+    if (updateError || !updated) {
+      throw new Error(updateError?.message || 'فشل تحديث حالة الشحنة');
+    }
+
+    // 2. Audit Event
     let eventType: any = 'status_changed';
     let detailMsg = `تم تغيير حالة الشحنة إلى ${newStatus}`;
     if (newStatus === 'out_for_delivery') {
-      eventType = 'delivery_started';
+      eventType = 'out_for_delivery';
       detailMsg = 'المندوب خرج لتسليم الشحنة للعميل';
     } else if (newStatus === 'delivered') {
       eventType = 'delivered';
       detailMsg = `تم تسليم الشحنة بنجاح واستلام مبلغ ${order.cod_amount} ج.م`;
     } else if (newStatus === 'failed') {
-      eventType = 'delivery_failed';
-      detailMsg = `تعذر التسليم: ${options?.failureNotes || options?.failureReason || 'فشل المحاولة'}`;
+      eventType = 'failed';
+      const reasonLabel = getFailureReasonLabel(options?.failureReason, true);
+      const notePart = (options?.failureNotes || options?.notes) ? ` - ملاحظات: ${options?.failureNotes || options?.notes}` : '';
+      detailMsg = `تعذر التسليم: ${reasonLabel}${notePart}`;
     }
 
     await this.addOrderEvent(companyId, {
@@ -1112,6 +1165,18 @@ const supabaseDb = {
       actor_name: options?.actorName || 'مدير النظام',
       details: detailMsg,
     });
+
+    if (newStatus === 'failed') {
+      const reasonLabel = getFailureReasonLabel(options?.failureReason, true);
+      await this.addNotification(companyId, {
+        recipient_role: 'admin',
+        type: 'order_failed',
+        title: 'تعثر في تسليم شحنة',
+        message: `تعذر تسليم الشحنة رقم ${order.order_number} (${reasonLabel})`,
+        order_id: order.id,
+        order_number: order.order_number,
+      }).catch(err => console.warn('Notification insert notice:', err));
+    }
 
     notifyOrderUpdated(orderId);
     return updated as Order;
@@ -1312,14 +1377,24 @@ const supabaseDb = {
   // ==========================================
   async getOrderEvents(orderId: string): Promise<OrderEvent[]> {
     if (!orderId) return [];
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('order_events')
       .select('*')
       .eq('order_id', orderId)
-      .order('timestamp', { ascending: false });
+      .order('created_at', { ascending: false });
+
+    if (error && error.message?.includes('created_at')) {
+      const retry = await supabase
+        .from('order_events')
+        .select('*')
+        .eq('order_id', orderId)
+        .order('timestamp', { ascending: false });
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
-      console.error('Error fetching order events:', error);
+      console.warn('Order events fetch notice:', error.message);
       return [];
     }
     return (data || []) as OrderEvent[];
@@ -1327,7 +1402,7 @@ const supabaseDb = {
 
   async getAllOrderEvents(companyId: string, options?: { limit?: number; actor?: string; eventType?: string; startDate?: string; endDate?: string; search?: string }): Promise<OrderEvent[]> {
     if (!companyId) return [];
-    let query = supabase.from('order_events').select('*').eq('company_id', companyId).order('timestamp', { ascending: false });
+    let query = supabase.from('order_events').select('*').eq('company_id', companyId).order('created_at', { ascending: false });
     if (options?.actor && options.actor !== 'all') {
       query = query.eq('actor', options.actor);
     }
@@ -1335,10 +1410,10 @@ const supabaseDb = {
       query = query.eq('event_type', options.eventType);
     }
     if (options?.startDate) {
-      query = query.gte('timestamp', options.startDate + 'T00:00:00.000Z');
+      query = query.gte('created_at', options.startDate + 'T00:00:00.000Z');
     }
     if (options?.endDate) {
-      query = query.lte('timestamp', options.endDate + 'T23:59:59.999Z');
+      query = query.lte('created_at', options.endDate + 'T23:59:59.999Z');
     }
     if (options?.search) {
       query = query.ilike('details', `%${options.search}%`);
@@ -1347,7 +1422,16 @@ const supabaseDb = {
       query = query.limit(options.limit);
     }
     const { data, error } = await query;
-    if (error) return [];
+    if (error) {
+      // Fallback to timestamp column if created_at failed
+      if (error.message?.includes('created_at')) {
+        let retryQuery = supabase.from('order_events').select('*').eq('company_id', companyId).order('timestamp', { ascending: false });
+        if (options?.limit && options.limit > 0) retryQuery = retryQuery.limit(options.limit);
+        const retry = await retryQuery;
+        return (retry.data || []) as OrderEvent[];
+      }
+      return [];
+    }
     return (data || []) as OrderEvent[];
   },
 
@@ -1356,7 +1440,8 @@ const supabaseDb = {
   },
 
   async addOrderEvent(companyId: string, data: { order_id: string; return_id?: string; event_type: any; actor: any; actor_name?: string; details: string }): Promise<OrderEvent> {
-    const newEvent = {
+    const nowIso = new Date().toISOString();
+    const newEvent: any = {
       company_id: companyId,
       order_id: data.order_id,
       return_id: data.return_id || null,
@@ -1364,12 +1449,22 @@ const supabaseDb = {
       actor: data.actor,
       actor_name: data.actor_name || null,
       details: data.details,
-      timestamp: new Date().toISOString(),
+      created_at: nowIso,
+      timestamp: nowIso,
     };
 
-    const { data: created, error } = await supabase.from('order_events').insert([newEvent]).select().single();
+    let { data: created, error } = await supabase.from('order_events').insert([newEvent]).select().single();
     if (error) {
-      console.warn('Failed to insert order event:', error);
+      // Retry without timestamp or created_at if one doesn't exist in remote schema
+      if (error.message?.includes('timestamp')) {
+        const { timestamp, ...safeEvent } = newEvent;
+        const retry = await supabase.from('order_events').insert([safeEvent]).select().single();
+        created = retry.data;
+      } else if (error.message?.includes('created_at')) {
+        const { created_at, ...safeEvent } = newEvent;
+        const retry = await supabase.from('order_events').insert([safeEvent]).select().single();
+        created = retry.data;
+      }
     }
     return (created || newEvent) as OrderEvent;
   },

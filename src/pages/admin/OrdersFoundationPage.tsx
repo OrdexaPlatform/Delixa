@@ -1059,19 +1059,41 @@ export const OrdersFoundationPage: React.FC = () => {
 
               {/* Failure details section (if failed) */}
               {currentOrder.status === 'failed' && (
-                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl space-y-1.5 text-rose-900">
-                  <div className="font-bold flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-rose-600" />
-                    <span>{t.failureReasonDetails}</span>
+                <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl space-y-2 text-rose-950">
+                  <div className="flex items-center justify-between gap-2 border-b border-rose-200/60 pb-2">
+                    <div className="font-black text-xs flex items-center gap-1.5 text-rose-800">
+                      <AlertTriangle className="w-4 h-4 text-rose-600" />
+                      <span>{t.failureReasonDetails}</span>
+                    </div>
+                    {currentOrder.failed_at && (
+                      <span className="text-[10px] text-rose-700 font-mono bg-rose-100/80 px-2 py-0.5 rounded-md">
+                        {new Date(currentOrder.failed_at).toLocaleString(isRTL ? 'ar-EG' : 'en-US')}
+                      </span>
+                    )}
                   </div>
-                  <p className="font-semibold text-xs">
-                    {currentOrder.failure_reason ? (FAILURE_REASONS[currentOrder.failure_reason as DeliveryFailureReason] || currentOrder.failure_reason) : 'غير محدد'}
-                  </p>
-                  {currentOrder.failure_notes && (
-                    <p className="text-[11px] text-rose-800 bg-white/70 p-2 rounded-lg border border-rose-200">
-                      <strong>ملاحظات:</strong> {currentOrder.failure_notes}
-                    </p>
-                  )}
+
+                  <div className="space-y-1 text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-slate-500 font-medium">سبب التعثر:</span>
+                      <span className="font-bold text-rose-900">
+                        {getFailureReasonLabel(currentOrder.failure_reason, isRTL)}
+                      </span>
+                    </div>
+
+                    {(currentOrder.failure_notes || currentOrder.failure_note) && (
+                      <div className="p-2.5 bg-white/90 rounded-xl border border-rose-200/80 text-[11px] text-rose-900 mt-1.5">
+                        <strong className="block text-[10px] text-rose-700 mb-0.5">ملاحظات المندوب:</strong>
+                        <p className="leading-relaxed whitespace-pre-wrap">{currentOrder.failure_notes || currentOrder.failure_note}</p>
+                      </div>
+                    )}
+
+                    {currentOrder.failed_by && (
+                      <div className="text-[11px] text-slate-600 pt-1">
+                        <span>سجل بواسطة: </span>
+                        <strong className="text-slate-800">{currentOrder.failed_by}</strong>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1195,13 +1217,13 @@ export const OrdersFoundationPage: React.FC = () => {
                              evt.event_type === 'customer_cancelled' ? 'طلب العميل إلغاء الشحنة' :
                              evt.event_type}
                           </div>
-                          {evt.notes && (
-                            <p className="text-slate-600 text-[10px] mt-0.5">{evt.notes}</p>
+                          {(evt.details || evt.notes) && (
+                            <p className="text-slate-600 text-[10px] mt-0.5">{evt.details || evt.notes}</p>
                           )}
-                          <span className="text-[9px] text-slate-400">بواسطة: {evt.actor_name}</span>
+                          <span className="text-[9px] text-slate-400">بواسطة: {evt.actor_name || evt.actor}</span>
                         </div>
                         <span className="text-[9px] text-slate-400 font-mono shrink-0">
-                          {new Date(evt.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                          {new Date(evt.created_at || evt.timestamp || Date.now()).toLocaleTimeString(isRTL ? 'ar-EG' : 'en-US', { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
                     ))}

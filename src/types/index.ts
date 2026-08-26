@@ -465,5 +465,205 @@ export interface AppNotification {
   created_at: string;
 }
 
+// ==============================================================================
+// SUPER ADMIN & PLATFORM MANAGEMENT TYPES
+// ==============================================================================
+
+export type SuperAdminRole = 'super_admin' | 'finance' | 'support' | 'operations' | 'staff';
+
+export type SuperAdminPermission =
+  | '*'
+  | 'dashboard.view'
+  | 'companies.view'
+  | 'companies.edit'
+  | 'companies.suspend'
+  | 'subscriptions.view'
+  | 'subscriptions.edit'
+  | 'payments.view'
+  | 'payments.edit'
+  | 'payments.refund'
+  | 'analytics.view'
+  | 'staff.view'
+  | 'staff.create'
+  | 'staff.edit'
+  | 'staff.delete'
+  | 'activity_logs.view'
+  | 'settings.view'
+  | 'settings.edit';
+
+export interface PlatformAdmin {
+  id: string;
+  username: string;
+  full_name: string;
+  email?: string;
+  phone?: string;
+  role: SuperAdminRole;
+  permissions: SuperAdminPermission[];
+  status: 'active' | 'disabled';
+  is_primary?: boolean;
+  last_login_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SuperAdminSession {
+  token: string;
+  admin: PlatformAdmin;
+  expires_at: string;
+}
+
+export type CompanyStatus = 'active' | 'suspended' | 'disabled' | 'trial' | 'expired';
+
+export interface PlatformSubscriptionPlan {
+  id: string;
+  name: string;
+  code: string;
+  price: number;
+  currency: string;
+  billing_cycle: 'monthly' | 'quarterly' | 'yearly';
+  trial_days: number;
+  order_limit: number;
+  courier_limit: number;
+  merchant_limit: number;
+  features: string[];
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface PlatformSubscription {
+  id: string;
+  company_id: string;
+  company_name?: string;
+  plan_id?: string;
+  plan_code: string;
+  plan_name: string;
+  price: number;
+  currency: string;
+  billing_cycle: 'monthly' | 'quarterly' | 'yearly';
+  start_date: string;
+  end_date: string;
+  status: 'active' | 'trial' | 'expired' | 'suspended' | 'cancelled';
+  payment_status: 'paid' | 'pending' | 'overdue';
+  auto_renewal: boolean;
+  days_remaining?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type PlatformPaymentStatus = 'paid' | 'pending' | 'failed' | 'refunded' | 'cancelled';
+export type PlatformPaymentMethod = 'instapay' | 'vodafone_cash' | 'fawry' | 'card' | 'bank_transfer' | 'paymob' | 'stripe' | 'cash';
+
+export interface PlatformPayment {
+  id: string;
+  payment_number: string;
+  company_id: string;
+  company_name?: string;
+  subscription_id?: string;
+  plan_name: string;
+  amount: number;
+  currency: string;
+  payment_method: PlatformPaymentMethod;
+  transaction_id?: string;
+  status: PlatformPaymentStatus;
+  payment_date: string;
+  created_by: string;
+  notes?: string;
+  gateway_response?: any;
+  created_at: string;
+}
+
+export interface PlatformPresenceRecord {
+  id: string;
+  company_id: string;
+  company_name?: string;
+  user_id?: string;
+  user_name?: string;
+  user_role: 'admin' | 'courier';
+  last_seen_at: string;
+  session_started_at: string;
+  ip_address?: string;
+  user_agent?: string;
+  is_online: boolean;
+  session_duration_minutes?: number;
+}
+
+export interface PlatformDailyAnalyticsRecord {
+  id: string;
+  visitor_id: string;
+  visit_date: string;
+  device_type: 'desktop' | 'mobile' | 'tablet';
+  browser?: string;
+  os?: string;
+  top_page: string;
+  page_views: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface PlatformActivityLog {
+  id: string;
+  admin_id?: string;
+  actor: string;
+  action: string;
+  target_type: 'company' | 'subscription' | 'payment' | 'staff' | 'plan' | 'settings' | 'auth';
+  target_id?: string;
+  company_id?: string;
+  company_name?: string;
+  details: string;
+  metadata?: Record<string, any>;
+  created_at: string;
+}
+
+export interface PlatformGeneralSettings {
+  platform_name: string;
+  support_email: string;
+  support_phone: string;
+  default_currency: string;
+  default_trial_days: number;
+  default_timezone: string;
+  maintenance_mode: boolean;
+  maintenance_message?: string;
+}
+
+export interface PlatformHealthStatus {
+  database: 'online' | 'warning' | 'error';
+  supabase: 'online' | 'warning' | 'error';
+  auth: 'online' | 'warning' | 'error';
+  realtime: 'online' | 'warning' | 'error';
+  storage: 'online' | 'warning' | 'error';
+  server_memory: {
+    rssMb: number;
+    heapUsedMb: number;
+    heapTotalMb: number;
+  };
+  server_uptime_seconds: number;
+  checked_at: string;
+}
+
+export interface CompanyWithPlatformMetrics extends Company {
+  status: CompanyStatus;
+  plan_code?: string;
+  plan_name?: string;
+  subscription_start_date?: string;
+  subscription_end_date?: string;
+  is_trial?: boolean;
+  couriers_count: number;
+  merchants_count: number;
+  orders_count: number;
+  total_cod_volume: number;
+  active_couriers_count: number;
+  is_online: boolean;
+  last_seen_at?: string;
+  active_users_online_count?: number;
+  latest_subscription?: PlatformSubscription | null;
+  admin_profile?: {
+    full_name: string;
+    email: string;
+    phone: string;
+  };
+}
+
+
 
 

@@ -339,16 +339,36 @@ CREATE TABLE IF NOT EXISTS public.orders (
     order_number VARCHAR(100) NOT NULL,
     customer_name VARCHAR(255) NOT NULL,
     customer_phone VARCHAR(50) NOT NULL,
+    governorate VARCHAR(100) DEFAULT 'القاهرة',
+    city_area VARCHAR(100) DEFAULT 'مدينة نصر',
     customer_address TEXT NOT NULL,
     customer_landmark TEXT,
     cod_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    shipping_fee NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
     delivery_date DATE,
     delivery_from TIME,
     delivery_to TIME,
     notes TEXT,
     status order_status NOT NULL DEFAULT 'pending',
+    
+    -- Confirmation Token
     confirmation_token VARCHAR(255) NOT NULL,
     customer_response_status VARCHAR(50) DEFAULT 'pending',
+    
+    -- Delivery Lifecycle & Failure Tracking
+    assigned_at TIMESTAMPTZ,
+    delivery_started_at TIMESTAMPTZ,
+    delivered_at TIMESTAMPTZ,
+    delivered_by VARCHAR(255),
+    delivered_by_courier_id UUID REFERENCES public.couriers(id) ON DELETE SET NULL,
+    failed_at TIMESTAMPTZ,
+    failed_by VARCHAR(255),
+    failure_reason VARCHAR(100),
+    failure_note TEXT,
+    failure_notes TEXT,
+    cancellation_source VARCHAR(50),
+    cancellation_timestamp TIMESTAMPTZ,
+
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT now() NOT NULL,
     CONSTRAINT uq_company_order_number UNIQUE (company_id, order_number)

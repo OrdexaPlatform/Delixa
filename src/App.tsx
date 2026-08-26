@@ -1,14 +1,33 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
+import { LanguageProvider } from './contexts/LanguageContext';
 import { ToastProvider } from './contexts/ToastContext';
+import { SuperAdminProvider, useSuperAdmin } from './contexts/SuperAdminContext';
+import { usePlatformTracker } from './utils/platformTracker';
 import { Header } from './components/common/Header';
 import { Sidebar } from './components/common/Sidebar';
 import { AdminRouteGuard } from './components/auth/AdminRouteGuard';
 import { CourierRouteGuard } from './components/auth/CourierRouteGuard';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 
-// Pages
+// Super Admin Components & Pages
+import { SuperAdminRouteGuard } from './components/superAdmin/SuperAdminRouteGuard';
+import { SuperAdminLayout } from './components/superAdmin/SuperAdminLayout';
+import { SuperAdminLoginPage } from './pages/superAdmin/SuperAdminLoginPage';
+import { SuperAdminDashboardPage } from './pages/superAdmin/SuperAdminDashboardPage';
+import { SuperAdminCompaniesPage } from './pages/superAdmin/SuperAdminCompaniesPage';
+import { SuperAdminCompanyDetailPage } from './pages/superAdmin/SuperAdminCompanyDetailPage';
+import { SuperAdminSubscriptionsPage } from './pages/superAdmin/SuperAdminSubscriptionsPage';
+import { SuperAdminPaymentsPage } from './pages/superAdmin/SuperAdminPaymentsPage';
+import { SuperAdminOnlinePage } from './pages/superAdmin/SuperAdminOnlinePage';
+import { SuperAdminAnalyticsPage } from './pages/superAdmin/SuperAdminAnalyticsPage';
+import { SuperAdminStaffPage } from './pages/superAdmin/SuperAdminStaffPage';
+import { SuperAdminActivityPage } from './pages/superAdmin/SuperAdminActivityPage';
+import { SuperAdminHealthPage } from './pages/superAdmin/SuperAdminHealthPage';
+import { SuperAdminSettingsPage } from './pages/superAdmin/SuperAdminSettingsPage';
+import { MaintenanceModeView } from './components/MaintenanceModeView';
+
+// Regular Shipping Company & Courier Pages
 import { LandingPage } from './pages/LandingPage';
 import { RegisterCompanyPage } from './pages/auth/RegisterCompanyPage';
 import { AdminLoginPage } from './pages/auth/AdminLoginPage';
@@ -30,15 +49,35 @@ import { CourierOrderDetailPage } from './pages/courier/CourierOrderDetailPage';
 
 const AppRouter: React.FC = () => {
   const { adminSession, courierSession, loading } = useAuth();
+  const { session: superAdminSession } = useSuperAdmin();
   const [currentPath, setCurrentPath] = useState<string>(() => {
     return window.location.pathname || '/';
   });
+  const [platformSettings, setPlatformSettings] = useState<{
+    maintenance_mode?: boolean;
+    maintenance_message?: string;
+    support_email?: string;
+    support_phone?: string;
+  }>({});
 
   const navigate = (path: string) => {
     window.history.pushState({}, '', path);
     setCurrentPath(path);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  // Determine current active company & user role for analytics/presence heartbeat
+  const currentCompanyId = adminSession?.company?.id || courierSession?.company?.id || null;
+  const currentCompanyName = adminSession?.company?.name || courierSession?.company?.name || null;
+  const currentRole = adminSession ? 'admin' : courierSession ? 'courier' : 'visitor';
+
+  // Initialize Platform Analytics & Presence Heartbeat Tracker
+  usePlatformTracker({
+    companyId: currentCompanyId,
+    companyName: currentCompanyName,
+    userRole: currentRole,
+    currentPath,
+  });
 
   useEffect(() => {
     const handlePopState = () => {
@@ -48,7 +87,19 @@ const AppRouter: React.FC = () => {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Isolated redirect for each login screen
+  // Fetch Public Platform Settings (for maintenance mode check)
+  useEffect(() => {
+    fetch('/api/platform/public-settings')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.settings) {
+          setPlatformSettings(data.settings);
+        }
+      })
+      .catch(() => {});
+  }, [currentPath]);
+
+  // Isolated redirect for regular company/courier login screens
   useEffect(() => {
     if (!loading) {
       const isAdminLogin = currentPath === '/login' || currentPath === '/login/admin' || currentPath === '/admin-login';
@@ -61,6 +112,59 @@ const AppRouter: React.FC = () => {
       }
     }
   }, [adminSession, courierSession, loading, currentPath]);
+
+  // -------------------------------------------------------------
+  // SUPER ADMIN ROUTES (Completely Isolated Platform Management)
+  // -------------------------------------------------------------
+  if (currentPath.startsWith('/super-admin')) {
+    if (currentPath === '/super-admin' || currentPath === '/super-admin/login') {
+      if (superAdminSession) {
+        return (
+          <SuperAdminLayout activePath="/super-admin/dashboard" onNavigate={navigate}>
+            <SuperAdminDashboardPage onNavigate={navigate} />
+          </SuperAdminLayout>
+        );
+      }
+      return <SuperAdminLoginPage onNavigate={navigate} />;
+    }
+
+    return (
+      <SuperAdminRouteGuard onNavigate={navigate}>
+        <SuperAdminLayout activePath={currentPath} onNavigate={navigate}>
+          {currentPath === '/super-admin/dashboard' && <SuperAdminDashboardPage onNavigate={navigate} />}
+          {currentPath === '/super-admin/companies' && <SuperAdminCompaniesPage onNavigate={navigate} />}
+          {currentPath.startsWith('/super-admin/companies/') && (
+            <SuperAdminCompanyDetailPage
+              companyId={currentPath.replace('/super-admin/companies/', '').split('?')[0]}
+              onNavigate={navigate}
+            />
+          )}
+          {currentPath === '/super-admin/subscriptions' && <SuperAdminSubscriptionsPage onNavigate={navigate} />}
+          {currentPath === '/super-admin/payments' && <SuperAdminPaymentsPage onNavigate={navigate} />}
+          {currentPath === '/super-admin/online' && <SuperAdminOnlinePage onNavigate={navigate} />}
+          {currentPath === '/super-admin/analytics' && <SuperAdminAnalyticsPage onNavigate={navigate} />}
+          {currentPath === '/super-admin/staff' && <SuperAdminStaffPage onNavigate={navigate} />}
+          {currentPath === '/super-admin/activity' && <SuperAdminActivityPage onNavigate={navigate} />}
+          {currentPath === '/super-admin/health' && <SuperAdminHealthPage onNavigate={navigate} />}
+          {currentPath === '/super-admin/settings' && <SuperAdminSettingsPage onNavigate={navigate} />}
+        </SuperAdminLayout>
+      </SuperAdminRouteGuard>
+    );
+  }
+
+  // -------------------------------------------------------------
+  // MAINTENANCE MODE CHECK (For regular visitors/companies)
+  // -------------------------------------------------------------
+  if (platformSettings.maintenance_mode && !superAdminSession) {
+    return (
+      <MaintenanceModeView
+        message={platformSettings.maintenance_message}
+        supportEmail={platformSettings.support_email}
+        supportPhone={platformSettings.support_phone}
+        onGoToSuperAdmin={() => navigate('/super-admin/login')}
+      />
+    );
+  }
 
   if (loading) {
     return (
@@ -117,7 +221,6 @@ const AppRouter: React.FC = () => {
       <Header navigate={navigate} currentPath={currentPath} />
 
       <div className="flex-1 flex max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 gap-6">
-        
         {/* Persistent Sidebar */}
         <div className="hidden md:block w-60 shrink-0">
           <Sidebar currentPath={currentPath} navigate={navigate} />
@@ -201,14 +304,13 @@ const AppRouter: React.FC = () => {
 
           {currentPath.startsWith('/courier/orders/') && (
             <CourierRouteGuard navigate={navigate}>
-              <CourierOrderDetailPage 
-                orderId={currentPath.replace('/courier/orders/', '').split('?')[0]} 
-                navigate={navigate} 
+              <CourierOrderDetailPage
+                orderId={currentPath.replace('/courier/orders/', '').split('?')[0]}
+                navigate={navigate}
               />
             </CourierRouteGuard>
           )}
         </main>
-
       </div>
     </div>
   );
@@ -220,7 +322,9 @@ export default function App() {
       <LanguageProvider>
         <ToastProvider>
           <AuthProvider>
-            <AppRouter />
+            <SuperAdminProvider>
+              <AppRouter />
+            </SuperAdminProvider>
           </AuthProvider>
         </ToastProvider>
       </LanguageProvider>

@@ -1,8 +1,9 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import { setupSuperAdminRoutes } from './server/superAdminRoutes';
 
 dotenv.config();
 
@@ -823,6 +824,22 @@ async function startServer() {
       });
     }
   });
+
+  // ============================================================================
+  // SUPER ADMIN & PLATFORM MANAGEMENT ROUTES
+  // ============================================================================
+  const getDbClient = (): SupabaseClient | null => {
+    if (!supabaseUrl || (!supabaseServiceKey && !supabaseAnonKey)) return null;
+    try {
+      return createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  setupSuperAdminRoutes(app, getDbClient);
 
   // Vite middleware for development vs static build in production
   if (process.env.NODE_ENV !== 'production') {
