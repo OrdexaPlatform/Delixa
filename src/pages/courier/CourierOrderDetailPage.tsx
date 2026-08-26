@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
-import { db, FAILURE_REASONS, subscribeOrderUpdates } from '../../lib/db';
+import { db, FAILURE_REASONS, FAILURE_REASONS_MAP, getFailureReasonLabel, subscribeOrderUpdates } from '../../lib/db';
 import { openWhatsAppChat, generateWhatsAppConfirmationMessage, getConfirmationUrl } from '../../lib/whatsapp';
 import { Order, DeliveryFailureReason, Merchant } from '../../types';
 import { Modal } from '../../components/common/Modal';
@@ -490,7 +490,7 @@ export const CourierOrderDetailPage: React.FC<CourierOrderDetailPageProps> = ({ 
             <div className="p-4 bg-red-50 border border-red-200 rounded-xl space-y-1">
               <div className="flex items-center gap-2 text-red-800 font-bold text-sm">
                 <AlertTriangle className="w-4 h-4 text-red-600" />
-                <span>سبب تعذر التسليم: {FAILURE_REASONS[order.failure_reason as DeliveryFailureReason] || order.failure_reason}</span>
+                <span>سبب تعذر التسليم: {getFailureReasonLabel(order.failure_reason, isRTL)}</span>
               </div>
               {(order.failure_note || order.failure_notes) && (
                 <p className="text-xs text-red-700 ps-6">
@@ -789,11 +789,11 @@ export const CourierOrderDetailPage: React.FC<CourierOrderDetailPageProps> = ({ 
                 يرجى تحديد سبب تعذر التسليم بدقة: <span className="text-red-500">*</span>
               </label>
               <div className="space-y-2">
-                {(Object.keys(FAILURE_REASONS) as DeliveryFailureReason[]).map((reasonKey) => (
+                {FAILURE_REASONS.map((item) => (
                   <label
-                    key={reasonKey}
+                    key={item.id}
                     className={`flex items-center gap-3 p-3 rounded-xl border text-xs cursor-pointer transition-all ${
-                      failureReason === reasonKey
+                      failureReason === item.id
                         ? 'border-red-500 bg-red-50/60 font-bold text-red-950 shadow-sm'
                         : 'border-slate-200 hover:bg-slate-50 text-slate-700'
                     }`}
@@ -801,12 +801,12 @@ export const CourierOrderDetailPage: React.FC<CourierOrderDetailPageProps> = ({ 
                     <input
                       type="radio"
                       name="failureReason"
-                      value={reasonKey}
-                      checked={failureReason === reasonKey}
-                      onChange={() => setFailureReason(reasonKey)}
+                      value={item.id}
+                      checked={failureReason === item.id}
+                      onChange={() => setFailureReason(item.id)}
                       className="text-red-600 focus:ring-red-500 w-4 h-4"
                     />
-                    <span>{FAILURE_REASONS[reasonKey]}</span>
+                    <span>{isRTL ? item.label : item.enLabel}</span>
                   </label>
                 ))}
               </div>
@@ -860,7 +860,7 @@ export const CourierOrderDetailPage: React.FC<CourierOrderDetailPageProps> = ({ 
 
             <div className="bg-red-50 p-3.5 rounded-xl border border-red-200 text-start text-xs space-y-1.5">
               <div>
-                <strong>السبب المحدد:</strong> {FAILURE_REASONS[failureReason]}
+                <strong>السبب المحدد:</strong> {getFailureReasonLabel(failureReason, isRTL)}
               </div>
               {failureNote.trim() && (
                 <div>

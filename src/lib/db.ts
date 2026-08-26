@@ -15,6 +15,8 @@ import {
   MerchantSettlement,
   MerchantFinancialSummary,
   DeliverySlot,
+  ShippingPricingSettings,
+  PricingModel,
   OrderStatus,
   CustomerResponseStatus,
   ReturnStatus,
@@ -44,7 +46,13 @@ export function isDemoScope(companyId?: string | null): boolean {
 
 export { DEMO_COMPANY_ID, demoDb };
 
-export const FAILURE_REASONS = [
+export interface FailureReasonItem {
+  id: DeliveryFailureReason;
+  label: string;
+  enLabel: string;
+}
+
+export const FAILURE_REASONS: FailureReasonItem[] = [
   { id: 'customer_unavailable', label: 'العميل غير متاح / لم يتم الرد', enLabel: 'Customer unavailable / No answer' },
   { id: 'customer_no_answer', label: 'العميل لا يرد على الهاتف', enLabel: 'Customer no answer' },
   { id: 'wrong_phone', label: 'رقم الهاتف غير صحيح أو مغلق', enLabel: 'Wrong or closed phone' },
@@ -54,7 +62,30 @@ export const FAILURE_REASONS = [
   { id: 'other', label: 'سبب آخر', enLabel: 'Other reason' }
 ];
 
-export const RETURN_REASONS = [
+export const FAILURE_REASONS_MAP: Record<string, string> = {
+  customer_unavailable: 'العميل غير متاح / لم يتم الرد',
+  customer_no_answer: 'العميل لا يرد على الهاتف',
+  wrong_phone: 'رقم الهاتف غير صحيح أو مغلق',
+  wrong_address: 'العنوان غير واضح / خاطئ',
+  customer_refused: 'رفض العميل استلام الشحنة',
+  customer_requested_reschedule: 'طلب العميل تأجيل الاستلام',
+  other: 'سبب آخر',
+};
+
+export function getFailureReasonLabel(reasonId?: string, isRtl: boolean = true): string {
+  if (!reasonId) return '';
+  const item = FAILURE_REASONS.find(r => r.id === reasonId);
+  if (item) return isRtl ? item.label : item.enLabel;
+  return FAILURE_REASONS_MAP[reasonId] || reasonId;
+}
+
+export interface ReturnReasonItem {
+  id: ReturnReason;
+  label: string;
+  enLabel: string;
+}
+
+export const RETURN_REASONS: ReturnReasonItem[] = [
   { id: 'customer_refused', label: 'رفض العميل الاستلام (عدم الرغبة)', enLabel: 'Customer refused (No desire)' },
   { id: 'damaged_shipment', label: 'تلف أو عيب في المنتج', enLabel: 'Damaged or defective item' },
   { id: 'wrong_address', label: 'تعذر الوصول / خطأ في العنوان', enLabel: 'Address unreachable / wrong' },
@@ -63,6 +94,110 @@ export const RETURN_REASONS = [
   { id: 'merchant_request', label: 'طلب استرجاع من التاجر', enLabel: 'Merchant recall request' },
   { id: 'other', label: 'أسباب أخرى', enLabel: 'Other reason' }
 ];
+
+export const RETURN_REASONS_MAP: Record<string, string> = {
+  customer_refused: 'رفض العميل الاستلام (عدم الرغبة)',
+  damaged_shipment: 'تلف أو عيب في المنتج',
+  wrong_address: 'تعذر الوصول / خطأ في العنوان',
+  customer_unavailable: 'العميل غير متواجد ومغلق',
+  customer_cancellation: 'إلغاء الطلب من قبل العميل',
+  merchant_request: 'طلب استرجاع من التاجر',
+  other: 'أسباب أخرى',
+};
+
+export function getReturnReasonLabel(reasonId?: string, isRtl: boolean = true): string {
+  if (!reasonId) return '';
+  const item = RETURN_REASONS.find(r => r.id === reasonId);
+  if (item) return isRtl ? item.label : item.enLabel;
+  return RETURN_REASONS_MAP[reasonId] || reasonId;
+}
+
+export const EGYPT_GOVERNORATES = [
+  'القاهرة (Cairo)',
+  'الجيزة (Giza)',
+  'الإسكندرية (Alexandria)',
+  'القليوبية (Qalyubia)',
+  'الشرقية (Sharqia)',
+  'الدقهلية (Dakahlia)',
+  'الغربية (Gharbia)',
+  'المنوفية (Monufia)',
+  'البحيرة (Beheira)',
+  'دمياط (Damietta)',
+  'بورسعيد (Port Said)',
+  'الإسماعيلية (Ismailia)',
+  'السويس (Suez)',
+  'كفر الشيخ (Kafr El Sheikh)',
+  'الفيوم (Fayoum)',
+  'بني سويف (Beni Suef)',
+  'المنيا (Minya)',
+  'أسيوط (Asyut)',
+  'سوهاج (Sohag)',
+  'قنا (Qena)',
+  'الأقصر (Luxor)',
+  'أسوان (Aswan)',
+  'البحر الأحمر (Red Sea)',
+  'مطروح (Matrouh)',
+  'شمال سيناء (North Sinai)',
+  'جنوب سيناء (South Sinai)',
+  'الوادي الجديد (New Valley)'
+];
+
+export const DEFAULT_GOVERNORATE_RATES: Record<string, number> = {
+  'القاهرة (Cairo)': 45,
+  'الجيزة (Giza)': 45,
+  'القليوبية (Qalyubia)': 50,
+  'الإسكندرية (Alexandria)': 60,
+  'الشرقية (Sharqia)': 60,
+  'الدقهلية (Dakahlia)': 60,
+  'الغربية (Gharbia)': 60,
+  'المنوفية (Monufia)': 60,
+  'البحيرة (Beheira)': 65,
+  'دمياط (Damietta)': 65,
+  'بورسعيد (Port Said)': 65,
+  'الإسماعيلية (Ismailia)': 65,
+  'السويس (Suez)': 65,
+  'كفر الشيخ (Kafr El Sheikh)': 65,
+  'الفيوم (Fayoum)': 65,
+  'بني سويف (Beni Suef)': 70,
+  'المنيا (Minya)': 75,
+  'أسيوط (Asyut)': 80,
+  'سوهاج (Sohag)': 85,
+  'قنا (Qena)': 90,
+  'الأقصر (Luxor)': 95,
+  'أسوان (Aswan)': 100,
+  'البحر الأحمر (Red Sea)': 110,
+  'مطروح (Matrouh)': 110,
+  'شمال سيناء (North Sinai)': 120,
+  'جنوب سيناء (South Sinai)': 120,
+  'الوادي الجديد (New Valley)': 120,
+};
+
+export const DEFAULT_SHIPPING_PRICING: ShippingPricingSettings = {
+  pricing_model: 'unified',
+  default_shipping_fee: 50,
+  governorate_rates: DEFAULT_GOVERNORATE_RATES,
+};
+
+export function calculateShippingFee(pricing?: ShippingPricingSettings | null, governorate?: string): number {
+  const p = pricing || DEFAULT_SHIPPING_PRICING;
+  if (p.pricing_model === 'unified') {
+    return Number(p.default_shipping_fee) || 50;
+  }
+  if (!governorate) {
+    return Number(p.default_shipping_fee) || 50;
+  }
+  const direct = p.governorate_rates[governorate];
+  if (direct !== undefined) return Number(direct);
+
+  const matched = Object.keys(p.governorate_rates).find(k => 
+    k.includes(governorate) || governorate.includes(k) ||
+    governorate.split(' ')[0] === k.split(' ')[0]
+  );
+  if (matched && p.governorate_rates[matched] !== undefined) {
+    return Number(p.governorate_rates[matched]);
+  }
+  return Number(p.default_shipping_fee) || 50;
+}
 
 export const DEFAULT_DELIVERY_SLOTS: DeliverySlot[] = [
   { id: 'slot-1', name: 'الفترة الصباحية (Morning)', from_time: '10:00', to_time: '14:00', is_active: true },
@@ -777,6 +912,7 @@ const supabaseDb = {
     customer_address: string;
     customer_landmark?: string;
     cod_amount: number;
+    shipping_fee?: number;
     delivery_date: string;
     delivery_from: string;
     delivery_to: string;
@@ -799,18 +935,19 @@ const supabaseDb = {
     const token = generateToken(32);
     const initialStatus = data.status || (data.courier_id ? 'assigned' : 'pending');
 
-    const newOrder = {
+    const newOrder: Record<string, any> = {
       company_id: companyId,
       merchant_id: data.merchant_id,
       courier_id: data.courier_id || null,
       order_number: orderNumber,
       customer_name: data.customer_name.trim(),
       customer_phone: data.customer_phone.trim(),
-      governorate: data.governorate || 'القاهرة',
+      governorate: data.governorate || 'القاهرة (Cairo)',
       city_area: data.city_area || 'مدينة نصر',
       customer_address: data.customer_address.trim(),
       customer_landmark: data.customer_landmark?.trim() || null,
       cod_amount: Number(data.cod_amount) || 0,
+      shipping_fee: Number(data.shipping_fee) || 0,
       delivery_date: data.delivery_date,
       delivery_from: data.delivery_from,
       delivery_to: data.delivery_to,
@@ -823,8 +960,21 @@ const supabaseDb = {
       updated_at: new Date().toISOString(),
     };
 
-    const { data: created, error } = await supabase.from('orders').insert([newOrder]).select().single();
-    if (error) throw new Error(error.message || 'فشل حفظ الشحنة في قاعدة البيانات');
+    let created: any = null;
+    const { data: resData, error } = await supabase.from('orders').insert([newOrder]).select().single();
+    if (error) {
+      // If shipping_fee column doesn't exist yet in Supabase, retry without it
+      if (error.message?.includes('shipping_fee')) {
+        const { shipping_fee, ...safeOrder } = newOrder;
+        const retryRes = await supabase.from('orders').insert([safeOrder]).select().single();
+        if (retryRes.error) throw new Error(retryRes.error.message || 'فشل حفظ الشحنة في قاعدة البيانات');
+        created = retryRes.data;
+      } else {
+        throw new Error(error.message || 'فشل حفظ الشحنة في قاعدة البيانات');
+      }
+    } else {
+      created = resData;
+    }
 
     // 3. Create initial audit event
     await this.addOrderEvent(companyId, {
@@ -1507,6 +1657,44 @@ const supabaseDb = {
   },
 
   // ==========================================
+  // SHIPPING PRICING SETTINGS
+  // ==========================================
+  async getCompanyShippingPricing(companyId: string): Promise<ShippingPricingSettings> {
+    if (!companyId) return DEFAULT_SHIPPING_PRICING;
+    // Check localStorage cache first
+    try {
+      const cached = localStorage.getItem(`delixa_shipping_pricing_${companyId}`);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.pricing_model) return parsed;
+      }
+    } catch (_) {}
+
+    const company = await this.getCompanyById(companyId);
+    if (company && company.shipping_pricing) {
+      return company.shipping_pricing;
+    }
+    return DEFAULT_SHIPPING_PRICING;
+  },
+
+  async saveCompanyShippingPricing(companyId: string, pricing: ShippingPricingSettings): Promise<boolean> {
+    if (!companyId) return false;
+    try {
+      localStorage.setItem(`delixa_shipping_pricing_${companyId}`, JSON.stringify(pricing));
+    } catch (_) {}
+
+    const { error } = await supabase.from('companies').update({
+      shipping_pricing: pricing,
+      updated_at: new Date().toISOString()
+    }).eq('id', companyId);
+
+    if (error) {
+      console.warn('Company shipping pricing update notice:', error.message);
+    }
+    return true;
+  },
+
+  // ==========================================
   // COURIER SETTLEMENTS & COLLECTIONS
   // ==========================================
   async getSettlements(companyId: string, courierId?: string): Promise<CourierSettlement[]> {
@@ -1601,7 +1789,7 @@ const supabaseDb = {
 
     const settlementNumber = await this.getNextSettlementNumber(companyId);
 
-    const newSettlement = {
+    const newSettlement: Record<string, any> = {
       company_id: companyId,
       courier_id: data.courier_id,
       settlement_number: settlementNumber,
@@ -1613,12 +1801,24 @@ const supabaseDb = {
       updated_at: new Date().toISOString(),
     };
 
-    const { data: created, error } = await supabase.from('courier_settlements').insert([newSettlement]).select().single();
-    if (error) throw new Error(error.message || 'فشل تسجيل التسوية في قاعدة البيانات');
+    let created: any = null;
+    const { data: resData, error } = await supabase.from('courier_settlements').insert([newSettlement]).select().single();
+    if (error) {
+      if (error.message?.includes('orders_count') || error.message?.includes('schema cache')) {
+        const { orders_count, ...safeSettlement } = newSettlement;
+        const retryRes = await supabase.from('courier_settlements').insert([safeSettlement]).select().single();
+        if (retryRes.error) throw new Error(retryRes.error.message || 'فشل تسجيل التسوية في قاعدة البيانات');
+        created = retryRes.data;
+      } else {
+        throw new Error(error.message || 'فشل تسجيل التسوية في قاعدة البيانات');
+      }
+    } else {
+      created = resData;
+    }
 
     notifyOrderUpdated();
     return {
-      id: created.id,
+      id: created?.id || generateId(),
       company_id: companyId,
       courier_id: data.courier_id,
       settlement_number: settlementNumber,
@@ -1627,7 +1827,7 @@ const supabaseDb = {
       remaining_amount: Math.max(0, summary.current_outstanding_balance - received),
       settled_by: data.settled_by,
       notes: data.notes,
-      created_at: created.created_at,
+      created_at: created?.created_at || new Date().toISOString(),
     };
   },
 
@@ -1725,7 +1925,7 @@ const supabaseDb = {
     const settlementNumber = await this.getNextMerchantSettlementNumber(companyId);
     const amount = Number(data.amount) || 0;
 
-    const newSet = {
+    const newSet: Record<string, any> = {
       company_id: companyId,
       merchant_id: data.merchant_id,
       settlement_number: settlementNumber,
@@ -1739,8 +1939,20 @@ const supabaseDb = {
       updated_at: new Date().toISOString(),
     };
 
-    const { data: created, error } = await supabase.from('merchant_settlements').insert([newSet]).select().single();
-    if (error) throw new Error(error.message || 'فشل حفظ تسوية التاجر');
+    let created: any = null;
+    const { data: resData, error } = await supabase.from('merchant_settlements').insert([newSet]).select().single();
+    if (error) {
+      if (error.message?.includes('net_paid_amount') || error.message?.includes('schema cache')) {
+        const { net_paid_amount, ...safeSet } = newSet;
+        const retryRes = await supabase.from('merchant_settlements').insert([safeSet]).select().single();
+        if (retryRes.error) throw new Error(retryRes.error.message || 'فشل حفظ تسوية التاجر');
+        created = retryRes.data;
+      } else {
+        throw new Error(error.message || 'فشل حفظ تسوية التاجر');
+      }
+    } else {
+      created = resData;
+    }
 
     // Also record transaction
     await this.addMerchantTransaction(companyId, {
@@ -1754,7 +1966,7 @@ const supabaseDb = {
 
     notifyOrderUpdated();
     return {
-      id: created.id,
+      id: created?.id || generateId(),
       company_id: companyId,
       merchant_id: data.merchant_id,
       settlement_number: settlementNumber,
@@ -1765,7 +1977,7 @@ const supabaseDb = {
       payment_method: data.payment_method,
       settled_by: data.settled_by,
       notes: data.notes,
-      created_at: created.created_at,
+      created_at: created?.created_at || new Date().toISOString(),
     };
   },
 
@@ -1783,11 +1995,12 @@ const supabaseDb = {
 
     const deliveredOrders = orders.filter(o => o.status === 'delivered');
     const deliveredCodSum = deliveredOrders.reduce((sum, o) => sum + (Number(o.cod_amount) || 0), 0);
+    const deliveredShippingFees = deliveredOrders.reduce((sum, o) => sum + (Number(o.shipping_fee) || 0), 0);
 
     const totalReturnFees = returns.reduce((sum, r) => sum + (Number(r.return_shipping_cost) || 0), 0);
     const payoutsSum = settlements.reduce((sum, s) => sum + (Number((s as any).amount || s.paid_amount) || 0), 0);
 
-    const netPosition = deliveredCodSum - totalReturnFees - payoutsSum;
+    const netPosition = deliveredCodSum - deliveredShippingFees - totalReturnFees - payoutsSum;
     const lastSettlement = settlements.length > 0 ? settlements[0].created_at : null;
 
     return {
@@ -2129,6 +2342,10 @@ export const db = {
   updateDeliverySlot: (companyId: string, slotId: string, updates: any) => (isDemoScope(companyId) ? demoDb.updateDeliverySlot(companyId, slotId, updates) : supabaseDb.updateDeliverySlot(companyId, slotId, updates)),
   toggleDeliverySlot: (companyId: string, slotId: string) => (isDemoScope(companyId) ? demoDb.toggleDeliverySlot(companyId, slotId) : supabaseDb.toggleDeliverySlot(companyId, slotId)),
   deleteDeliverySlot: (companyId: string, slotId: string) => (isDemoScope(companyId) ? demoDb.deleteDeliverySlot(companyId, slotId) : supabaseDb.deleteDeliverySlot(companyId, slotId)),
+
+  // Shipping Pricing
+  getCompanyShippingPricing: (companyId: string) => (isDemoScope(companyId) ? demoDb.getCompanyShippingPricing(companyId) : supabaseDb.getCompanyShippingPricing(companyId)),
+  saveCompanyShippingPricing: (companyId: string, pricing: any) => (isDemoScope(companyId) ? demoDb.saveCompanyShippingPricing(companyId, pricing) : supabaseDb.saveCompanyShippingPricing(companyId, pricing)),
 
   // Settlements
   getSettlements: (companyId: string, courierId?: string) => (isDemoScope(companyId) ? demoDb.getSettlements(companyId, courierId) : supabaseDb.getSettlements(companyId, courierId)),

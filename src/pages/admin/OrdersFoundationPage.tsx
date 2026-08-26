@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
-import { db, FAILURE_REASONS, subscribeOrderUpdates } from '../../lib/db';
+import { db, FAILURE_REASONS, getFailureReasonLabel, calculateShippingFee, DEFAULT_SHIPPING_PRICING, subscribeOrderUpdates } from '../../lib/db';
 import { openWhatsAppChat, generateWhatsAppConfirmationMessage, getConfirmationUrl } from '../../lib/whatsapp';
-import { Order, OrderStatus, Merchant, Courier, DeliveryFailureReason, CustomerResponseStatus, OrderEvent, ReturnRecord } from '../../types';
+import { Order, OrderStatus, Merchant, Courier, DeliveryFailureReason, CustomerResponseStatus, OrderEvent, ReturnRecord, ShippingPricingSettings } from '../../types';
 import { Modal } from '../../components/common/Modal';
 import { ReturnInvoiceModal } from '../../components/returns/ReturnInvoiceModal';
 import { CreateReturnModal } from '../../components/returns/CreateReturnModal';
@@ -120,6 +120,8 @@ export const OrdersFoundationPage: React.FC = () => {
   const [deliveryTo, setDeliveryTo] = useState('18:00');
   const [notes, setNotes] = useState('');
   const [status, setStatus] = useState<OrderStatus>('pending');
+  const [shippingPricing, setShippingPricing] = useState<ShippingPricingSettings>(DEFAULT_SHIPPING_PRICING);
+  const [shippingFee, setShippingFee] = useState<number>(50);
 
   // Failure modal fields
   const [failureReason, setFailureReason] = useState<DeliveryFailureReason>('customer_unavailable');
@@ -131,10 +133,13 @@ export const OrdersFoundationPage: React.FC = () => {
   const loadData = async () => {
     if (!session) return;
     const companyId = session.company.id;
-    const ords = await db.getOrders(companyId);
-    const mers = await db.getMerchants(companyId);
-    const crs = await db.getCouriers(companyId);
-    const rets = await db.getReturns(companyId);
+    const [ords, mers, crs, rets, pricing] = await Promise.all([
+      db.getOrders(companyId),
+      db.getMerchants(companyId),
+      db.getCouriers(companyId),
+      db.getReturns(companyId),
+      db.getCompanyShippingPricing(companyId),
+    ]);
 
     const rMap: Record<string, ReturnRecord> = {};
     rets.forEach(r => { rMap[r.order_id] = r; });
@@ -143,6 +148,9 @@ export const OrdersFoundationPage: React.FC = () => {
     setMerchants(mers);
     setCouriers(crs);
     setReturnsMap(rMap);
+    if (pricing) {
+      setShippingPricing(pricing);
+    }
   };
 
   useEffect(() => {
@@ -200,16 +208,19 @@ export const OrdersFoundationPage: React.FC = () => {
   const resetForm = async () => {
     if (!session) return;
     const nextNo = await db.getNextOrderNumber(session.company.id);
+    const initialGov = 'القاهرة (Cairo)';
+    const autoFee = calculateShippingFee(shippingPricing, initialGov);
     setOrderNumber(nextNo);
     setMerchantId(merchants[0]?.id || '');
     setCourierId('');
     setCustomerName('');
     setCustomerPhone('01');
-    setGovernorate('القاهرة (Cairo)');
+    setGovernorate(initialGov);
     setCityArea('');
     setCustomerAddress('');
     setCustomerLandmark('');
     setCodAmount(450);
+    setShippingFee(autoFee);
     setDeliveryDate(new Date().toISOString().split('T')[0]);
     setDeliveryFrom('10:00');
     setDeliveryTo('18:00');
@@ -234,11 +245,13 @@ export const OrdersFoundationPage: React.FC = () => {
     setCourierId(order.courier_id || '');
     setCustomerName(order.customer_name);
     setCustomerPhone(order.customer_phone);
-    setGovernorate(order.governorate || 'القاهرة (Cairo)');
+    const ordGov = order.governorate || 'القاهرة (Cairo)';
+    setGovernorate(ordGov);
     setCityArea(order.city_area || '');
     setCustomerAddress(order.customer_address);
     setCustomerLandmark(order.customer_landmark || '');
     setCodAmount(Number(order.cod_amount) || 0);
+    setShippingFee(order.shipping_fee !== undefined && order.shipping_fee !== null ? Number(order.shipping_fee) : calculateShippingFee(shippingPricing, ordGov));
     setDeliveryDate(order.delivery_date || new Date().toISOString().split('T')[0]);
     setDeliveryFrom(order.delivery_from || '10:00');
     setDeliveryTo(order.delivery_to || '18:00');
@@ -282,6 +295,12 @@ export const OrdersFoundationPage: React.FC = () => {
     setIsFailureModalOpen(true);
   };
 
+  const handleGovernorateChange = (newGov: string, isEditing: boolean = false) => {
+    setGovernorate(newGov);
+    const autoFee = calculateShippingFee(shippingPricing, newGov);
+    setShippingFee(autoFee);
+  };
+
   const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session) return;
@@ -303,6 +322,7 @@ export const OrdersFoundationPage: React.FC = () => {
         customer_address: customerAddress.trim(),
         customer_landmark: customerLandmark.trim(),
         cod_amount: Number(codAmount) || 0,
+        shipping_fee: Number(shippingFee) || 0,
         delivery_date: deliveryDate,
         delivery_from: deliveryFrom,
         delivery_to: deliveryTo,
@@ -333,6 +353,7 @@ export const OrdersFoundationPage: React.FC = () => {
         customer_address: customerAddress.trim(),
         customer_landmark: customerLandmark.trim(),
         cod_amount: Number(codAmount) || 0,
+        shipping_fee: Number(shippingFee) || 0,
         delivery_date: deliveryDate,
         delivery_from: deliveryFrom,
         delivery_to: deliveryTo,
@@ -1376,7 +1397,7 @@ export const OrdersFoundationPage: React.FC = () => {
                 <label className="block font-bold text-slate-700 mb-1">{t.governorate} *</label>
                 <select
                   value={governorate}
-                  onChange={e => setGovernorate(e.target.value)}
+                  onChange={e => handleGovernorateChange(e.target.value, false)}
                   className="w-full p-2 bg-white border border-slate-300 rounded-xl text-slate-900"
                 >
                   {EGYPT_GOVERNORATES.map(gov => (
@@ -1422,7 +1443,7 @@ export const OrdersFoundationPage: React.FC = () => {
           </div>
 
           {/* Financial & Logistics */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block font-bold text-slate-700 mb-1">{t.assignedCourier} (اختياري)</label>
               <select
@@ -1444,11 +1465,35 @@ export const OrdersFoundationPage: React.FC = () => {
               <input
                 type="number"
                 min="0"
-                step="10"
+                step="any"
                 required
-                value={codAmount}
-                onChange={e => setCodAmount(Number(e.target.value))}
+                value={codAmount === 0 ? '' : codAmount}
+                onChange={e => {
+                  const val = e.target.value;
+                  setCodAmount(val === '' ? 0 : Number(val));
+                }}
+                placeholder="0"
                 className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-emerald-800 text-slate-900"
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-bold text-slate-700">مصاريف الشحن (ج.م) *</label>
+                <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded">تلقائي</span>
+              </div>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                required
+                value={shippingFee === 0 ? '' : shippingFee}
+                onChange={e => {
+                  const val = e.target.value;
+                  setShippingFee(val === '' ? 0 : Number(val));
+                }}
+                placeholder="0"
+                className="w-full p-2 bg-blue-50/50 border border-blue-200 rounded-xl font-bold text-blue-900 text-slate-900"
               />
             </div>
           </div>
@@ -1581,7 +1626,7 @@ export const OrdersFoundationPage: React.FC = () => {
               <label className="block font-bold text-slate-700 mb-1">{t.governorate}</label>
               <select
                 value={governorate}
-                onChange={e => setGovernorate(e.target.value)}
+                onChange={e => handleGovernorateChange(e.target.value, true)}
                 className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900"
               >
                 {EGYPT_GOVERNORATES.map(gov => (
@@ -1622,7 +1667,7 @@ export const OrdersFoundationPage: React.FC = () => {
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block font-bold text-slate-700 mb-1">{t.assignedCourier}</label>
               <select
@@ -1644,11 +1689,35 @@ export const OrdersFoundationPage: React.FC = () => {
               <input
                 type="number"
                 min="0"
-                step="10"
+                step="any"
                 required
-                value={codAmount}
-                onChange={e => setCodAmount(Number(e.target.value))}
+                value={codAmount === 0 ? '' : codAmount}
+                onChange={e => {
+                  const val = e.target.value;
+                  setCodAmount(val === '' ? 0 : Number(val));
+                }}
+                placeholder="0"
                 className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-emerald-800 text-slate-900"
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-bold text-slate-700">مصاريف الشحن (ج.م) *</label>
+                <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-1.5 py-0.5 rounded">محدد</span>
+              </div>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                required
+                value={shippingFee === 0 ? '' : shippingFee}
+                onChange={e => {
+                  const val = e.target.value;
+                  setShippingFee(val === '' ? 0 : Number(val));
+                }}
+                placeholder="0"
+                className="w-full p-2 bg-blue-50/50 border border-blue-200 rounded-xl font-bold text-blue-900 text-slate-900"
               />
             </div>
           </div>
@@ -1782,22 +1851,22 @@ export const OrdersFoundationPage: React.FC = () => {
           <div className="space-y-2">
             <label className="block font-bold text-slate-700">حدد السبب الدقيق لتعثر التسليم *</label>
             <div className="space-y-1.5">
-              {(Object.keys(FAILURE_REASONS) as DeliveryFailureReason[]).map(key => (
+              {FAILURE_REASONS.map(item => (
                 <label 
-                  key={key} 
+                  key={item.id} 
                   className={`flex items-center gap-2.5 p-2.5 rounded-xl border cursor-pointer transition-colors ${
-                    failureReason === key ? 'bg-rose-50 border-rose-300 text-rose-900 font-bold' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                    failureReason === item.id ? 'bg-rose-50 border-rose-300 text-rose-900 font-bold' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
                   }`}
                 >
                   <input
                     type="radio"
                     name="failure_reason"
-                    value={key}
-                    checked={failureReason === key}
-                    onChange={() => setFailureReason(key)}
+                    value={item.id}
+                    checked={failureReason === item.id}
+                    onChange={() => setFailureReason(item.id)}
                     className="text-rose-600 focus:ring-rose-500"
                   />
-                  <span>{FAILURE_REASONS[key]}</span>
+                  <span>{getFailureReasonLabel(item.id, isRTL)}</span>
                 </label>
               ))}
             </div>

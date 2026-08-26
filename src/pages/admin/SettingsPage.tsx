@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
-import { db, DEFAULT_DELIVERY_SLOTS } from '../../lib/db';
-import { DeliverySlot } from '../../types';
+import { db, DEFAULT_DELIVERY_SLOTS, DEFAULT_SHIPPING_PRICING, EGYPT_GOVERNORATES } from '../../lib/db';
+import { DeliverySlot, ShippingPricingSettings, PricingModel } from '../../types';
 import { 
   Settings, 
   Building2, 
@@ -28,9 +28,13 @@ import {
   AlertTriangle,
   RotateCcw,
   Sparkles,
+  Coins,
+  DollarSign,
+  Calculator,
+  Percent,
 } from 'lucide-react';
 
-type SettingsTab = 'company' | 'slots' | 'profile' | 'database';
+type SettingsTab = 'company' | 'pricing' | 'slots' | 'profile' | 'database';
 
 export const SettingsPage: React.FC = () => {
   const { session, updateCompanyProfile, logout } = useAuth();
@@ -46,6 +50,11 @@ export const SettingsPage: React.FC = () => {
   const [address, setAddress] = useState(session?.company.address || '');
   const [logoUrl, setLogoUrl] = useState(session?.company.logo_url || '');
   const [savingCompany, setSavingCompany] = useState(false);
+
+  // Shipping Pricing state
+  const [shippingPricing, setShippingPricing] = useState<ShippingPricingSettings>(DEFAULT_SHIPPING_PRICING);
+  const [savingPricing, setSavingPricing] = useState(false);
+  const [bulkRateValue, setBulkRateValue] = useState<number>(50);
 
   // Delivery Slots state
   const [slots, setSlots] = useState<DeliverySlot[]>([]);
@@ -77,10 +86,55 @@ export const SettingsPage: React.FC = () => {
       db.getDeliverySlots(session.company.id).then(currentSlots => {
         setSlots(currentSlots);
       });
+
+      db.getCompanyShippingPricing(session.company.id).then(pricing => {
+        if (pricing) {
+          setShippingPricing(pricing);
+          if (pricing.default_shipping_fee) {
+            setBulkRateValue(pricing.default_shipping_fee);
+          }
+        }
+      });
     }
   }, [session]);
 
   if (!session) return null;
+
+  // Save Shipping Pricing
+  const handleSavePricing = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingPricing(true);
+    try {
+      await db.saveCompanyShippingPricing(session.company.id, shippingPricing);
+      showToast('success', 'تم حفظ إعدادات تسعير الشحن بنجاح');
+    } catch (err: any) {
+      showToast('error', 'تعذر حفظ إعدادات التسعير', err.message);
+    } finally {
+      setSavingPricing(false);
+    }
+  };
+
+  const handleApplyBulkRate = () => {
+    const updatedRates: Record<string, number> = {};
+    EGYPT_GOVERNORATES.forEach(gov => {
+      updatedRates[gov] = bulkRateValue;
+    });
+    setShippingPricing(prev => ({
+      ...prev,
+      governorate_rates: updatedRates
+    }));
+    showToast('success', `تم تطبيق سعر ${bulkRateValue} ج.م على جميع المحافظات`);
+  };
+
+  const handleGovernorateRateChange = (gov: string, value: number) => {
+    setShippingPricing(prev => ({
+      ...prev,
+      governorate_rates: {
+        ...(prev.governorate_rates || {}),
+        [gov]: Math.max(0, value)
+      }
+    }));
+  };
 
   // Save Company Profile
   const handleSaveCompany = async (e: React.FormEvent) => {
@@ -355,6 +409,7 @@ CREATE POLICY "Strict Tenant Isolation for Returns"
 
   const navTabs: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
     { id: 'company', label: 'بيانات الشركة (Company)', icon: Building2 },
+    { id: 'pricing', label: 'تسعير الشحن (Pricing)', icon: Coins },
     { id: 'slots', label: 'نوافذ ومواعيد التوصيل (Slots)', icon: Clock },
     { id: 'profile', label: 'الحساب والأمان (Security)', icon: User },
     { id: 'database', label: 'قاعدة البيانات و RLS', icon: Database },
@@ -522,6 +577,208 @@ CREATE POLICY "Strict Tenant Isolation for Returns"
               >
                 <Save className="w-4 h-4" />
                 <span>{savingCompany ? 'جاري الحفظ...' : t.saveChanges}</span>
+              </button>
+            </div>
+
+          </form>
+        </div>
+      )}
+
+      {/* 3.1 Tab: Shipping Pricing System */}
+      {activeTab === 'pricing' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 max-w-4xl space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+            <div>
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Coins className="w-5 h-5 text-emerald-600" />
+                <span>نظام تسعير مصاريف الشحن (Shipping Pricing System)</span>
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                تحديد طريقة احتساب تكلفة الشحن (سعر موحد أو مخصص لكل محافظة)، وتطبيقها تلقائياً عند إنشاء الشحنات وتأثيرها على مستحقات المتاجر.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShippingPricing(DEFAULT_SHIPPING_PRICING);
+                  showToast('info', 'تم استعادة التسعير الافتراضي');
+                }}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors flex items-center gap-1"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>استعادة الافتراضي</span>
+              </button>
+            </div>
+          </div>
+
+          <form onSubmit={handleSavePricing} className="space-y-6">
+            
+            {/* Pricing Model Selection */}
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+              <label className="block text-xs font-bold text-slate-800">
+                اختر نموذج التسعير المعتمد في شركتك:
+              </label>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Unified Option */}
+                <label
+                  onClick={() => setShippingPricing(prev => ({ ...prev, pricing_model: 'unified' }))}
+                  className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex flex-col justify-between gap-2 ${
+                    shippingPricing.pricing_model === 'unified'
+                      ? 'border-emerald-500 bg-emerald-50/50 shadow-sm'
+                      : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                        shippingPricing.pricing_model === 'unified' ? 'border-emerald-600 bg-emerald-600' : 'border-slate-300'
+                      }`}>
+                        {shippingPricing.pricing_model === 'unified' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                      </div>
+                      <span className="font-bold text-xs text-slate-900">سعر موحد لكل المحافظات (Unified Rate)</span>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800">بسيط & سريع</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 ps-6">
+                    يتم تطبيق نفس تكلفة الشحن على جميع الشحنات بغض النظر عن المحافظة المختارة.
+                  </p>
+                </label>
+
+                {/* Per-Governorate Option */}
+                <label
+                  onClick={() => setShippingPricing(prev => ({ ...prev, pricing_model: 'governorate' }))}
+                  className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex flex-col justify-between gap-2 ${
+                    shippingPricing.pricing_model === 'governorate'
+                      ? 'border-emerald-500 bg-emerald-50/50 shadow-sm'
+                      : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                        shippingPricing.pricing_model === 'governorate' ? 'border-emerald-600 bg-emerald-600' : 'border-slate-300'
+                      }`}>
+                        {shippingPricing.pricing_model === 'governorate' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                      </div>
+                      <span className="font-bold text-xs text-slate-900">سعر مخصص لكل محافظة (Per-Governorate)</span>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-100 text-blue-800">دقيق & مرن</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 ps-6">
+                    تحديد سعر شحن مستقل لكل محافظة من محافظات مصر الـ 27 تلقائياً.
+                  </p>
+                </label>
+              </div>
+            </div>
+
+            {/* If Unified: Single Input */}
+            {shippingPricing.pricing_model === 'unified' && (
+              <div className="p-5 bg-emerald-50/40 rounded-2xl border border-emerald-200/80 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-emerald-950 text-xs flex items-center gap-1.5">
+                      <DollarSign className="w-4 h-4 text-emerald-600" />
+                      <span>قيمة مصاريف الشحن الموحدة (ج.م)</span>
+                    </h3>
+                    <p className="text-[11px] text-emerald-800 mt-0.5">
+                      سيتم ملء خانة مصاريف الشحن تلقائياً بهذه القيمة عند إضافة أي طلب جديد.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="5"
+                      required
+                      value={shippingPricing.default_shipping_fee || 50}
+                      onChange={e => setShippingPricing(prev => ({
+                        ...prev,
+                        default_shipping_fee: Number(e.target.value) || 0
+                      }))}
+                      className="w-32 px-3 py-2 bg-white rounded-xl border border-emerald-300 font-bold text-emerald-900 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 text-center"
+                    />
+                    <span className="font-bold text-xs text-emerald-900">ج.م</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* If Per-Governorate: Interactive Grid / Table */}
+            {shippingPricing.pricing_model === 'governorate' && (
+              <div className="space-y-4">
+                
+                {/* Bulk Apply Bar */}
+                <div className="p-3.5 bg-blue-50 rounded-xl border border-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="text-xs text-blue-900">
+                    <span className="font-bold">تطبيق سريع:</span> تعيين سعر موحد كأساس لجميع المحافظات دفعة واحدة
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="5"
+                      value={bulkRateValue}
+                      onChange={e => setBulkRateValue(Number(e.target.value) || 0)}
+                      className="w-24 px-2.5 py-1.5 bg-white rounded-lg border border-blue-300 font-bold text-blue-900 text-xs text-center"
+                    />
+                    <span className="text-xs font-bold text-blue-900">ج.م</span>
+                    <button
+                      type="button"
+                      onClick={handleApplyBulkRate}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                    >
+                      تطبيق على الكل
+                    </button>
+                  </div>
+                </div>
+
+                {/* Rates Table / Grid */}
+                <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+                  <div className="bg-slate-100/80 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs font-bold text-slate-700">
+                    <span>المحافظة (Governorate)</span>
+                    <span>سعر الشحن (ج.م)</span>
+                  </div>
+
+                  <div className="divide-y divide-slate-100 max-h-[380px] overflow-y-auto bg-white p-1">
+                    {EGYPT_GOVERNORATES.map(gov => {
+                      const rate = shippingPricing.governorate_rates?.[gov] ?? shippingPricing.default_shipping_fee ?? 50;
+                      return (
+                        <div key={gov} className="flex items-center justify-between px-3 py-2 hover:bg-slate-50 rounded-lg transition-colors">
+                          <span className="text-xs font-medium text-slate-800">{gov}</span>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              min="0"
+                              step="5"
+                              value={rate}
+                              onChange={e => handleGovernorateRateChange(gov, Number(e.target.value) || 0)}
+                              className="w-24 px-2.5 py-1 bg-slate-50 hover:bg-white border border-slate-200 focus:border-emerald-500 rounded-lg text-xs font-bold text-emerald-800 text-center focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            />
+                            <span className="text-[11px] text-slate-400 font-bold">ج.م</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* Save Button */}
+            <div className="pt-4 border-t border-slate-100 flex items-center justify-end">
+              <button
+                type="submit"
+                id="save-pricing-btn"
+                disabled={savingPricing}
+                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-sm transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                <span>{savingPricing ? 'جاري الحفظ...' : 'حفظ إعدادات التسعير'}</span>
               </button>
             </div>
 

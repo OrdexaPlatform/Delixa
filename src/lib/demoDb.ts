@@ -708,11 +708,12 @@ class DemoDatabase {
       order_number: orderNumber,
       customer_name: data.customer_name,
       customer_phone: data.customer_phone,
-      governorate: data.governorate || 'القاهرة',
+      governorate: data.governorate || 'القاهرة (Cairo)',
       city_area: data.city_area || '',
       customer_address: data.customer_address,
       customer_landmark: data.customer_landmark,
       cod_amount: Number(data.cod_amount) || 0,
+      shipping_fee: Number((data as any).shipping_fee) || 0,
       delivery_date: data.delivery_date || new Date().toISOString().split('T')[0],
       delivery_from: data.delivery_from || '10:00',
       delivery_to: data.delivery_to || '14:00',
@@ -1153,6 +1154,54 @@ class DemoDatabase {
     const slots = await this.getDeliverySlots(companyId);
     const filtered = slots.filter(s => s.id !== slotId);
     await this.saveDeliverySlots(companyId, filtered);
+    return true;
+  }
+
+  // Shipping Pricing
+  async getCompanyShippingPricing(companyId: string) {
+    const company = await this.getCompanyById(companyId);
+    return company?.shipping_pricing || {
+      pricing_model: 'unified',
+      default_shipping_fee: 50,
+      governorate_rates: {
+        'القاهرة (Cairo)': 45,
+        'الجيزة (Giza)': 45,
+        'القليوبية (Qalyubia)': 50,
+        'الإسكندرية (Alexandria)': 60,
+        'الشرقية (Sharqia)': 60,
+        'الدقهلية (Dakahlia)': 60,
+        'الغربية (Gharbia)': 60,
+        'المنوفية (Monufia)': 60,
+        'البحيرة (Beheira)': 65,
+        'دمياط (Damietta)': 65,
+        'بورسعيد (Port Said)': 65,
+        'الإسماعيلية (Ismailia)': 65,
+        'السويس (Suez)': 65,
+        'كفر الشيخ (Kafr El Sheikh)': 65,
+        'الفيوم (Fayoum)': 65,
+        'بني سويف (Beni Suef)': 70,
+        'المنيا (Minya)': 75,
+        'أسيوط (Asyut)': 80,
+        'سوهاج (Sohag)': 85,
+        'قنا (Qena)': 90,
+        'الأقصر (Luxor)': 95,
+        'أسوان (Aswan)': 100,
+        'البحر الأحمر (Red Sea)': 110,
+        'مطروح (Matrouh)': 110,
+        'شمال سيناء (North Sinai)': 120,
+        'جنوب سيناء (South Sinai)': 120,
+        'الوادي الجديد (New Valley)': 120,
+      }
+    };
+  }
+
+  async saveCompanyShippingPricing(companyId: string, pricing: any) {
+    const store = this.getStore();
+    const cIdx = store.companies.findIndex(c => c.id === companyId);
+    if (cIdx !== -1) {
+      store.companies[cIdx].shipping_pricing = pricing;
+      this.saveStore(store);
+    }
     return true;
   }
 

@@ -28,6 +28,14 @@ export type DeliveryFailureReason =
 
 export type Language = 'ar' | 'en';
 
+export type PricingModel = 'unified' | 'governorate';
+
+export interface ShippingPricingSettings {
+  pricing_model: PricingModel;
+  default_shipping_fee: number;
+  governorate_rates: Record<string, number>;
+}
+
 export interface DeliverySlot {
   id: string;
   name: string;
@@ -46,6 +54,7 @@ export interface Company {
   address: string;
   logo_url?: string;
   delivery_slots?: DeliverySlot[];
+  shipping_pricing?: ShippingPricingSettings;
   created_at: string;
   updated_at: string;
 }
@@ -105,6 +114,7 @@ export interface Order {
   customer_address: string;
   customer_landmark?: string;
   cod_amount: number;
+  shipping_fee?: number;
   delivery_date: string;
   delivery_from: string;
   delivery_to: string;
@@ -172,6 +182,7 @@ export interface PublicShipmentView {
   governorate?: string;
   customer_landmark?: string;
   cod_amount: number;
+  shipping_fee?: number;
   delivery_date: string;
   delivery_from: string;
   delivery_to: string;

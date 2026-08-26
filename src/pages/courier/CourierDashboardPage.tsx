@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
-import { db, FAILURE_REASONS, subscribeOrderUpdates } from '../../lib/db';
+import { db, FAILURE_REASONS, FAILURE_REASONS_MAP, getFailureReasonLabel, subscribeOrderUpdates } from '../../lib/db';
 import { openWhatsAppChat, generateWhatsAppConfirmationMessage } from '../../lib/whatsapp';
 import { Order, DeliveryFailureReason, CourierCollectionSummary } from '../../types';
 import { Modal } from '../../components/common/Modal';
@@ -864,11 +864,11 @@ export const CourierDashboardPage: React.FC<CourierDashboardPageProps> = ({ navi
                 اختر سبب تعثر التسليم: <span className="text-red-500">*</span>
               </label>
               <div className="space-y-2 max-h-60 overflow-y-auto pe-1">
-                {(Object.keys(FAILURE_REASONS) as DeliveryFailureReason[]).map((reasonKey) => (
+                {FAILURE_REASONS.map((item) => (
                   <label
-                    key={reasonKey}
+                    key={item.id}
                     className={`flex items-center gap-3 p-2.5 rounded-xl border text-xs cursor-pointer transition-all ${
-                      failureReason === reasonKey
+                      failureReason === item.id
                         ? 'border-red-500 bg-red-50/60 font-bold text-red-950 shadow-sm'
                         : 'border-slate-200 hover:bg-slate-50 text-slate-700'
                     }`}
@@ -876,12 +876,12 @@ export const CourierDashboardPage: React.FC<CourierDashboardPageProps> = ({ navi
                     <input
                       type="radio"
                       name="failureReasonDash"
-                      value={reasonKey}
-                      checked={failureReason === reasonKey}
-                      onChange={() => setFailureReason(reasonKey)}
+                      value={item.id}
+                      checked={failureReason === item.id}
+                      onChange={() => setFailureReason(item.id)}
                       className="text-red-600 focus:ring-red-500 w-4 h-4"
                     />
-                    <span>{FAILURE_REASONS[reasonKey]}</span>
+                    <span>{isRTL ? item.label : item.enLabel}</span>
                   </label>
                 ))}
               </div>
@@ -926,7 +926,7 @@ export const CourierDashboardPage: React.FC<CourierDashboardPageProps> = ({ navi
                 هل أنت متأكد من تسجيل تعثر تسليم الشحنة #{selectedOrder?.order_number}؟
               </h3>
               <p className="text-xs text-slate-500">
-                السبب: {FAILURE_REASONS[failureReason]} {failureNote ? `(${failureNote})` : ''}
+                السبب: {getFailureReasonLabel(failureReason, isRTL)} {failureNote ? `(${failureNote})` : ''}
               </p>
             </div>
 
