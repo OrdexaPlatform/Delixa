@@ -70,3 +70,39 @@ export function sendPresenceHeartbeat(companyId: string, userId?: string, userNa
     // silent
   }
 }
+
+import { useEffect } from 'react';
+
+interface PlatformTrackerOptions {
+  companyId?: string | null;
+  companyName?: string | null;
+  userRole?: string;
+  currentPath?: string;
+}
+
+export function usePlatformTracker({
+  companyId,
+  companyName,
+  userRole,
+  currentPath,
+}: PlatformTrackerOptions = {}) {
+  // Track page view when path changes
+  useEffect(() => {
+    trackPageView(currentPath);
+  }, [currentPath]);
+
+  // Send periodic presence heartbeat if companyId is present
+  useEffect(() => {
+    if (!companyId) return;
+
+    const role = userRole === 'courier' ? 'courier' : 'admin';
+    sendPresenceHeartbeat(companyId, undefined, companyName || undefined, role);
+
+    const interval = setInterval(() => {
+      sendPresenceHeartbeat(companyId, undefined, companyName || undefined, role);
+    }, 45000); // Heartbeat every 45s
+
+    return () => clearInterval(interval);
+  }, [companyId, companyName, userRole]);
+}
+

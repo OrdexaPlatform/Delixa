@@ -20,6 +20,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
+import { DelixaLogo } from '../common/DelixaLogo';
 import { GlobalSearchModal } from './GlobalSearchModal';
 
 interface SuperAdminLayoutProps {
@@ -198,19 +199,8 @@ export const SuperAdminLayout: React.FC<SuperAdminLayoutProps> = ({
             {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
 
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => onNavigate('/super-admin/dashboard')}>
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20 font-black text-white text-lg tracking-wider">
-              D
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-extrabold text-base tracking-tight text-white">DELIXA</span>
-                <span className="text-[10px] uppercase font-bold tracking-widest px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                  Super Admin
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400 font-medium">لوحة الإدارة والتحكم المركزية</p>
-            </div>
+          <div className="flex items-center cursor-pointer" onClick={() => onNavigate('/super-admin/dashboard')}>
+            <DelixaLogo size="sm" theme="dark" variant="full" badgeText="SUPER ADMIN" />
           </div>
         </div>
 

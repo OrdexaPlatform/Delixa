@@ -8,6 +8,8 @@ const memorySessions = new Map<string, { admin: any; expires_at: Date }>();
 const memoryPresence = new Map<string, any>();
 // In-memory fallback analytics store (deduplicated by visitorId + date)
 const memoryAnalytics = new Map<string, any>();
+// Rate limiter map for Super Admin login protection
+const failedLoginAttempts = new Map<string, { count: number; lockedUntil?: number }>();
 // In-memory platform settings cache
 let platformSettingsCache: any = {
   platform_name: 'DELIXA',
@@ -25,24 +27,6 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   const DEFAULT_ADMIN_PASSWORD = process.env.SUPER_ADMIN_INITIAL_PASSWORD || '200300';
   const DEFAULT_ADMIN_HASH = hashPassword(DEFAULT_ADMIN_PASSWORD);
 
-  // In-memory admins fallback list (seeded with initial admin)
-  const memoryAdmins: any[] = [
-    {
-      id: '00000000-0000-0000-0000-000000000001',
-      username: DEFAULT_ADMIN_USERNAME,
-      password_hash: DEFAULT_ADMIN_HASH,
-      full_name: 'Super Admin (المالك)',
-      email: 'admin@delixa.eg',
-      phone: '+201000000000',
-      role: 'super_admin',
-      permissions: ['*'],
-      status: 'active',
-      is_primary: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }
-  ];
-
   // Helper: Seed or ensure initial Super Admin in Supabase DB
   async function ensurePrimaryAdminInDb() {
     const supabase = getDbClient();
@@ -56,7 +40,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
         .maybeSingle();
 
       if (error) {
-        // Table might not exist yet; migration will create it
+        console.warn('[DELIXA DB Warning] platform_admins query notice:', error.message);
         return;
       }
 
@@ -74,17 +58,22 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
             is_primary: true,
           }
         ]);
+        console.log('[DELIXA DB] Primary Super Admin initialized in platform_admins.');
       }
     } catch (e) {
-      console.warn('Super Admin seed notice:', e);
+      console.warn('Super Admin seed exception:', e);
     }
   }
 
-  // Helper: Add Activity Log
+  // Trigger primary admin initialization
+  ensurePrimaryAdminInDb();
+
+  // Helper: Add Activity Log to Database
   async function logActivity(actor: string, action: string, targetType: string, targetId: string, details: string, metadata: any = {}, adminId?: string, companyId?: string) {
     const supabase = getDbClient();
     const logItem = {
       admin_id: adminId || null,
+      admin_name: actor,
       actor,
       action,
       target_type: targetType,
@@ -92,13 +81,14 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
       company_id: companyId || null,
       details,
       metadata,
+      meta: metadata,
       created_at: new Date().toISOString(),
     };
     if (supabase) {
       try {
         await supabase.from('platform_activity_logs').insert([logItem]);
-      } catch {
-        // Safe silence if table pending
+      } catch (err: any) {
+        console.error('[DELIXA DB] Failed to record activity log in platform_activity_logs:', err?.message || err);
       }
     }
   }
@@ -115,13 +105,13 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
 
       let admin: any = null;
 
-      // 1. Check in-memory active sessions
+      // 1. Check in-memory cache first for high performance
       const mem = memorySessions.get(token);
       if (mem && mem.expires_at > new Date()) {
         admin = mem.admin;
       }
 
-      // 2. Check Database platform_sessions if available
+      // 2. Query persistent Database platform_sessions in Supabase
       if (!admin) {
         const supabase = getDbClient();
         if (supabase) {
@@ -135,14 +125,14 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
 
             if (!sessError && sessionData && sessionData.platform_admins) {
               admin = sessionData.platform_admins;
-              // Cache in memory for speed
+              // Cache in memory
               memorySessions.set(token, {
                 admin,
                 expires_at: new Date(sessionData.expires_at),
               });
             }
-          } catch {
-            // fallback
+          } catch (err) {
+            console.error('[DELIXA Auth] Session verification database error:', err);
           }
         }
       }
@@ -156,24 +146,48 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
       next();
     } catch (err: any) {
       console.error('Super Admin Auth Middleware error:', err);
-      return res.status(500).json({ success: false, error: 'خطأ أثناء التحقق من صلاحيات Super Admin' });
+      return res.status(500).json({ success: false, error: 'حدث خطأ في الخادم أثناء التحقق من الصلاحيات' });
     }
   };
 
   // Helper: Permission checking middleware generator
-  const requirePermission = (permission: string) => {
+  const requirePermission = (...requiredPerms: string[]) => {
     return (req: Request, res: Response, next: NextFunction) => {
       const admin = (req as any).superAdmin;
       if (!admin) {
         return res.status(401).json({ success: false, error: 'غير مصرح' });
       }
       const permissions: string[] = admin.permissions || [];
-      if (permissions.includes('*') || permissions.includes(permission)) {
+      if (permissions.includes('*') || admin.role === 'super_admin') {
         return next();
       }
+
+      // Check if user has ANY of the required permissions or their standard aliases
+      const hasAccess = requiredPerms.some((perm) => {
+        if (permissions.includes(perm)) return true;
+
+        // Alias matching: .edit <-> .manage, audit.view <-> activity_logs.view
+        const parts = perm.split('.');
+        const domain = parts[0];
+        const action = parts[1];
+
+        if (action === 'edit' && permissions.includes(`${domain}.manage`)) return true;
+        if (action === 'manage' && permissions.includes(`${domain}.edit`)) return true;
+        if (action === 'delete' && permissions.includes(`${domain}.manage`)) return true;
+        if (action === 'create' && (permissions.includes(`${domain}.manage`) || permissions.includes(`${domain}.edit`))) return true;
+        if (perm === 'activity_logs.view' && permissions.includes('audit.view')) return true;
+        if (perm === 'audit.view' && permissions.includes('activity_logs.view')) return true;
+
+        return false;
+      });
+
+      if (hasAccess) {
+        return next();
+      }
+
       return res.status(403).json({
         success: false,
-        error: `ليس لديك الصلاحية المطلوبة (${permission}) لتنفيذ هذا الإجراء`,
+        error: `ليس لديك الصلاحية المطلوبة (${requiredPerms.join(' أو ')}) لتنفيذ هذا الإجراء`,
       });
     };
   };
@@ -345,35 +359,57 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
         });
       }
 
+      const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
       const cleanUsername = username.trim().toLowerCase();
+      const rateLimitKey = `${ip}_${cleanUsername}`;
+
+      // Check if locked
+      const attempt = failedLoginAttempts.get(rateLimitKey);
+      if (attempt && attempt.lockedUntil && attempt.lockedUntil > Date.now()) {
+        const remainingMin = Math.ceil((attempt.lockedUntil - Date.now()) / 60000);
+        return res.status(429).json({
+          success: false,
+          error: `تم حظر محاولات الدخول مؤقتاً بسبب تكرار المحاولات الخاطئة. يرجى المحاولة بعد ${remainingMin} دقيقة.`,
+        });
+      }
+
       let matchedAdmin: any = null;
 
-      // Check Supabase first
+      // Check Supabase platform_admins
       const supabase = getDbClient();
       if (supabase) {
         try {
-          const { data, error } = await supabase
+          let { data, error } = await supabase
             .from('platform_admins')
             .select('*')
             .ilike('username', cleanUsername)
             .maybeSingle();
 
-          if (!error && data) {
+          if (!data && cleanUsername === DEFAULT_ADMIN_USERNAME) {
+            await ensurePrimaryAdminInDb();
+            const retry = await supabase
+              .from('platform_admins')
+              .select('*')
+              .ilike('username', cleanUsername)
+              .maybeSingle();
+            data = retry.data;
+          }
+
+          if (data) {
             matchedAdmin = data;
           }
-        } catch {
-          // fallback
+        } catch (dbErr) {
+          console.error('[DELIXA DB] Login database error:', dbErr);
         }
       }
 
-      // Check fallback memory list if not in DB yet
       if (!matchedAdmin) {
-        matchedAdmin = memoryAdmins.find(
-          a => a.username.toLowerCase() === cleanUsername
-        );
-      }
-
-      if (!matchedAdmin) {
+        const prev = failedLoginAttempts.get(rateLimitKey) || { count: 0 };
+        const newCount = prev.count + 1;
+        failedLoginAttempts.set(rateLimitKey, {
+          count: newCount,
+          lockedUntil: newCount >= 5 ? Date.now() + 15 * 60 * 1000 : undefined,
+        });
         return res.status(401).json({
           success: false,
           error: 'اسم المستخدم أو كلمة المرور غير صحيحة',
@@ -389,16 +425,24 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
 
       const isMatch = verifyPassword(password, matchedAdmin.password_hash);
       if (!isMatch) {
+        const prev = failedLoginAttempts.get(rateLimitKey) || { count: 0 };
+        const newCount = prev.count + 1;
+        failedLoginAttempts.set(rateLimitKey, {
+          count: newCount,
+          lockedUntil: newCount >= 5 ? Date.now() + 15 * 60 * 1000 : undefined,
+        });
         return res.status(401).json({
           success: false,
           error: 'اسم المستخدم أو كلمة المرور غير صحيحة',
         });
       }
 
+      // Success: clear rate limiter
+      failedLoginAttempts.delete(rateLimitKey);
+
       // Generate Session Token (7 days validity)
       const token = generateSecureToken();
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-      const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '';
       const userAgent = req.headers['user-agent'] || '';
 
       // Store in memory
@@ -836,7 +880,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   });
 
   // Change Company Status (Activate, Suspend, Disable, Reactivate)
-  router.post('/api/super-admin/companies/:id/status', requireSuperAdmin, requirePermission('companies.suspend'), async (req, res) => {
+  router.post('/api/super-admin/companies/:id/status', requireSuperAdmin, requirePermission('companies.suspend', 'companies.manage', 'companies.edit'), async (req, res) => {
     try {
       const companyId = req.params.id;
       const { status, reason } = req.body || {};
@@ -906,7 +950,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   });
 
   // Extend or modify company subscription
-  router.post('/api/super-admin/companies/:id/subscription', requireSuperAdmin, requirePermission('subscriptions.edit'), async (req, res) => {
+  router.post('/api/super-admin/companies/:id/subscription', requireSuperAdmin, requirePermission('subscriptions.edit', 'subscriptions.manage'), async (req, res) => {
     try {
       const companyId = req.params.id;
       const { extensionDays, endDate, planCode, planName, isTrial } = req.body || {};
@@ -1033,7 +1077,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   });
 
   // Create or Update Plan
-  router.post('/api/super-admin/plans', requireSuperAdmin, requirePermission('subscriptions.edit'), async (req, res) => {
+  router.post('/api/super-admin/plans', requireSuperAdmin, requirePermission('subscriptions.edit', 'subscriptions.manage'), async (req, res) => {
     try {
       const { name, code, price, currency, billing_cycle, trial_days, order_limit, courier_limit, merchant_limit, features, is_active } = req.body || {};
       const admin = (req as any).superAdmin;
@@ -1085,7 +1129,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
     }
   });
 
-  router.put('/api/super-admin/plans/:id', requireSuperAdmin, requirePermission('subscriptions.edit'), async (req, res) => {
+  router.put('/api/super-admin/plans/:id', requireSuperAdmin, requirePermission('subscriptions.edit', 'subscriptions.manage'), async (req, res) => {
     try {
       const planId = req.params.id;
       const raw = req.body || {};
@@ -1190,7 +1234,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   });
 
   // Create Manual Platform Payment Record
-  router.post('/api/super-admin/payments', requireSuperAdmin, requirePermission('payments.edit'), async (req, res) => {
+  router.post('/api/super-admin/payments', requireSuperAdmin, requirePermission('payments.edit', 'payments.manage', 'payments.create'), async (req, res) => {
     try {
       const { company_id, plan_name, amount, currency, payment_method, transaction_id, status, notes } = req.body || {};
       const admin = (req as any).superAdmin;
@@ -1246,7 +1290,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   });
 
   // Refund or Update Payment Status
-  router.post('/api/super-admin/payments/:id/status', requireSuperAdmin, requirePermission('payments.refund'), async (req, res) => {
+  router.post('/api/super-admin/payments/:id/status', requireSuperAdmin, requirePermission('payments.refund', 'payments.manage', 'payments.edit'), async (req, res) => {
     try {
       const paymentId = req.params.id;
       const { status, reason } = req.body || {};
@@ -1291,7 +1335,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   // 7. ONLINE PRESENCE DIRECTORY
   // ============================================================================
 
-  router.get('/api/super-admin/presence', requireSuperAdmin, async (_req, res) => {
+  router.get('/api/super-admin/presence', requireSuperAdmin, requirePermission('online.view', 'dashboard.view'), async (_req, res) => {
     try {
       const supabase = getDbClient();
       let companies: any[] = [];
@@ -1444,14 +1488,13 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   router.get('/api/super-admin/staff', requireSuperAdmin, requirePermission('staff.view'), async (_req, res) => {
     try {
       const supabase = getDbClient();
-      let staff: any[] = [];
-      if (supabase) {
-        const { data } = await supabase.from('platform_admins').select('*').order('created_at', { ascending: false });
-        staff = data || [];
+      if (!supabase) return res.status(500).json({ success: false, error: 'قاعدة البيانات غير متصلة' });
+
+      const { data, error } = await supabase.from('platform_admins').select('*').order('created_at', { ascending: false });
+      if (error) {
+        return res.status(500).json({ success: false, error: 'فشل جلب قائمة الموظفين من قاعدة البيانات: ' + error.message });
       }
-      if (staff.length === 0) {
-        staff = memoryAdmins;
-      }
+      const staff = data || [];
 
       const safeStaff = staff.map(s => {
         const copy = { ...s };
@@ -1466,7 +1509,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   });
 
   // Create Staff
-  router.post('/api/super-admin/staff', requireSuperAdmin, requirePermission('staff.create'), async (req, res) => {
+  router.post('/api/super-admin/staff', requireSuperAdmin, requirePermission('staff.create', 'staff.manage'), async (req, res) => {
     try {
       const { username, password, full_name, email, phone, role, permissions } = req.body || {};
       const callerAdmin = (req as any).superAdmin;
@@ -1477,51 +1520,97 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
 
       const cleanUsername = username.trim().toLowerCase();
       const supabase = getDbClient();
+      if (!supabase) return res.status(500).json({ success: false, error: 'قاعدة البيانات غير متصلة' });
 
-      if (supabase) {
-        const { data: existing } = await supabase.from('platform_admins').select('id').ilike('username', cleanUsername).maybeSingle();
-        if (existing) {
-          return res.status(400).json({ success: false, error: 'اسم المستخدم مسجل مسبقاً' });
+      const { data: existing } = await supabase.from('platform_admins').select('id').ilike('username', cleanUsername).maybeSingle();
+      if (existing) {
+        return res.status(400).json({ success: false, error: 'اسم المستخدم مسجل مسبقاً' });
+      }
+
+      function getDefaultPermissionsForRole(r: string): string[] {
+        switch (r) {
+          case 'super_admin':
+            return ['*'];
+          case 'operations':
+            return [
+              'dashboard.view',
+              'companies.view',
+              'companies.manage',
+              'companies.edit',
+              'online.view',
+              'analytics.view',
+              'audit.view',
+              'activity_logs.view',
+            ];
+          case 'finance':
+            return [
+              'dashboard.view',
+              'companies.view',
+              'subscriptions.view',
+              'subscriptions.edit',
+              'subscriptions.manage',
+              'payments.view',
+              'payments.manage',
+              'analytics.view',
+            ];
+          case 'support':
+            return [
+              'dashboard.view',
+              'companies.view',
+              'online.view',
+              'settings.view',
+            ];
+          case 'viewer':
+            return [
+              'dashboard.view',
+              'companies.view',
+              'subscriptions.view',
+              'payments.view',
+              'online.view',
+              'analytics.view',
+              'audit.view',
+              'activity_logs.view',
+              'settings.view',
+            ];
+          default:
+            return ['dashboard.view', 'companies.view'];
         }
       }
 
+      const assignedRole = role || 'support';
+      const assignedPermissions = Array.isArray(permissions) && permissions.length > 0
+        ? permissions
+        : getDefaultPermissionsForRole(assignedRole);
+
       const passwordHash = hashPassword(password);
-      const newStaff = {
+      const newStaff: any = {
         username: cleanUsername,
         password_hash: passwordHash,
         full_name: full_name.trim(),
         email: email ? email.trim() : null,
         phone: phone ? phone.trim() : null,
-        role: role || 'staff',
-        permissions: Array.isArray(permissions) ? permissions : ['dashboard.view', 'companies.view'],
+        role: assignedRole,
+        permissions: assignedPermissions,
         status: 'active',
         is_primary: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
       };
 
-      let created: any = null;
-      if (supabase) {
-        const { data, error } = await supabase.from('platform_admins').insert([newStaff]).select('*').single();
-        if (error) return res.status(400).json({ success: false, error: error.message });
-        created = data;
-      } else {
-        newStaff.id = `staff-${Date.now()}`;
-        memoryAdmins.push(newStaff);
-        created = newStaff;
+      const { data, error } = await supabase.from('platform_admins').insert([newStaff]).select('*').single();
+      if (error) {
+        return res.status(500).json({ success: false, error: 'فشل حفظ الموظف في قاعدة البيانات: ' + error.message });
       }
 
       logActivity(
         callerAdmin.full_name,
         'create_staff',
         'staff',
-        created.id,
+        data.id,
         `تم إنشاء حساب موظف جديد: ${full_name} (${cleanUsername}) بدور ${role || 'staff'}`,
         { role, permissions },
         callerAdmin.id
       );
 
-      const safe = { ...created };
+      const safe = { ...data };
       delete safe.password_hash;
       return res.json({ success: true, staff: safe });
     } catch (err: any) {
@@ -1530,7 +1619,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   });
 
   // Edit Staff (permissions, role, status)
-  router.put('/api/super-admin/staff/:id', requireSuperAdmin, requirePermission('staff.edit'), async (req, res) => {
+  router.put('/api/super-admin/staff/:id', requireSuperAdmin, requirePermission('staff.edit', 'staff.manage'), async (req, res) => {
     try {
       const staffId = req.params.id;
       const { full_name, email, phone, role, permissions, status } = req.body || {};
@@ -1583,7 +1672,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   });
 
   // Reset Staff Password
-  router.post('/api/super-admin/staff/:id/password', requireSuperAdmin, requirePermission('staff.edit'), async (req, res) => {
+  router.post('/api/super-admin/staff/:id/password', requireSuperAdmin, requirePermission('staff.edit', 'staff.manage'), async (req, res) => {
     try {
       const staffId = req.params.id;
       const { newPassword } = req.body || {};
@@ -1621,7 +1710,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   });
 
   // Delete/Disable Staff
-  router.delete('/api/super-admin/staff/:id', requireSuperAdmin, requirePermission('staff.delete'), async (req, res) => {
+  router.delete('/api/super-admin/staff/:id', requireSuperAdmin, requirePermission('staff.delete', 'staff.manage'), async (req, res) => {
     try {
       const staffId = req.params.id;
       const callerAdmin = (req as any).superAdmin;
@@ -1685,7 +1774,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   // 11. SYSTEM HEALTH DIAGNOSTICS
   // ============================================================================
 
-  router.get('/api/super-admin/system-health', requireSuperAdmin, async (_req, res) => {
+  router.get('/api/super-admin/system-health', requireSuperAdmin, requirePermission('settings.view', 'dashboard.view'), async (_req, res) => {
     try {
       const supabase = getDbClient();
       let dbStatus: 'online' | 'warning' | 'error' = 'online';
@@ -1750,7 +1839,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
     }
   });
 
-  router.put('/api/super-admin/settings', requireSuperAdmin, requirePermission('settings.edit'), async (req, res) => {
+  router.put('/api/super-admin/settings', requireSuperAdmin, requirePermission('settings.edit', 'settings.manage'), async (req, res) => {
     try {
       const raw = req.body || {};
       const admin = (req as any).superAdmin;
@@ -1789,7 +1878,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   // 13. GLOBAL SEARCH
   // ============================================================================
 
-  router.get('/api/super-admin/search', requireSuperAdmin, async (req, res) => {
+  router.get('/api/super-admin/search', requireSuperAdmin, requirePermission('dashboard.view', 'companies.view'), async (req, res) => {
     try {
       const q = ((req.query.q as string) || '').trim();
       if (!q || q.length < 2) {

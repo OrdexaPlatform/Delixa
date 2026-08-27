@@ -921,6 +921,35 @@ const supabaseDb = {
   }): Promise<Order> {
     if (!companyId) throw new Error('معرف الشركة مطلوب لإنشاء الشحنة');
 
+    // Try server-side secure create-order route first
+    try {
+      const { data: sessData } = await supabase.auth.getSession();
+      const token = sessData?.session?.access_token;
+      if (token && typeof window !== 'undefined') {
+        const res = await fetch('/api/admin/create-order', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify(data),
+        });
+
+        const json = await res.json();
+        if (res.ok && json.success && json.order) {
+          notifyOrderUpdated();
+          return json.order as Order;
+        } else if (json.error) {
+          throw new Error(json.error);
+        }
+      }
+    } catch (e: any) {
+      if (e.message && !e.message.includes('fetch')) {
+        throw e;
+      }
+      console.warn('Backend create-order endpoint attempt passed to Supabase client:', e);
+    }
+
     // 1. Verify merchant belongs to company
     const merchant = await this.getMerchantById(companyId, data.merchant_id);
     if (!merchant) throw new Error('التاجر المحدد غير تابع لهذه الشركة أو غير موجود');

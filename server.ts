@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
@@ -470,6 +471,21 @@ async function startServer() {
       }
 
       const companyId = adminProfile.company_id;
+
+      // Verify Company Status (Enforce Server-Side Suspension)
+      const { data: companyRecord } = await dbClient
+        .from('companies')
+        .select('id, name, status')
+        .eq('id', companyId)
+        .maybeSingle();
+
+      if (companyRecord && (companyRecord.status === 'suspended' || companyRecord.status === 'disabled')) {
+        return res.status(403).json({
+          success: false,
+          error: 'حساب شركتك موقوف حاليًا. يرجى التواصل مع إدارة DELIXA.',
+        });
+      }
+
       const { employee_id, full_name, phone, area, password, status } = req.body;
 
       if (!employee_id || !full_name || !phone || !area) {
@@ -690,6 +706,21 @@ async function startServer() {
       }
 
       const companyId = adminProfile.company_id;
+
+      // Verify Company Status (Enforce Server-Side Suspension)
+      const { data: companyRecord } = await dbClient
+        .from('companies')
+        .select('id, name, status')
+        .eq('id', companyId)
+        .maybeSingle();
+
+      if (companyRecord && (companyRecord.status === 'suspended' || companyRecord.status === 'disabled')) {
+        return res.status(403).json({
+          success: false,
+          error: 'حساب شركتك موقوف حاليًا. يرجى التواصل مع إدارة DELIXA.',
+        });
+      }
+
       const { store_name, owner_name, brand_name, phone, whatsapp, email, address, logo_url, notes, status } = req.body;
 
       if (!store_name || !owner_name || !phone || !address) {
@@ -783,6 +814,21 @@ async function startServer() {
       }
 
       const companyId = adminProfile.company_id;
+
+      // Verify Company Status (Enforce Server-Side Suspension)
+      const { data: companyRecord } = await dbClient
+        .from('companies')
+        .select('id, name, status')
+        .eq('id', companyId)
+        .maybeSingle();
+
+      if (companyRecord && (companyRecord.status === 'suspended' || companyRecord.status === 'disabled')) {
+        return res.status(403).json({
+          success: false,
+          error: 'حساب شركتك موقوف حاليًا. يرجى التواصل مع إدارة DELIXA.',
+        });
+      }
+
       const raw = req.body || {};
       const updates: Record<string, any> = {
         updated_at: new Date().toISOString(),
@@ -822,6 +868,260 @@ async function startServer() {
         success: false,
         error: err.message || 'حدث خطأ داخلي أثناء تعديل بيانات المتجر',
       });
+    }
+  });
+
+  // 4b. Admin Create Order Endpoint (Strict Multi-tenant & Suspension Enforcement)
+  app.post('/api/admin/create-order', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+
+      if (!token || !supabaseUrl || !supabaseAnonKey) {
+        return res.status(401).json({
+          success: false,
+          error: 'غير مصرح: يرجى تسجيل الدخول واستخدام رمز مصادقة صالح',
+        });
+      }
+
+      const callerClient = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: userData, error: userError } = await callerClient.auth.getUser(token);
+
+      if (userError || !userData?.user) {
+        return res.status(401).json({
+          success: false,
+          error: 'جلسة تسجيل الدخول منتهية أو غير صالحة',
+        });
+      }
+
+      const dbClient = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      const { data: profile, error: profError } = await dbClient
+        .from('profiles')
+        .select('*')
+        .eq('auth_user_id', userData.user.id)
+        .maybeSingle();
+
+      if (profError || !profile || (profile.role !== 'admin' && profile.role !== 'courier')) {
+        return res.status(403).json({
+          success: false,
+          error: 'غير مصرح لإنشاء الشحنات',
+        });
+      }
+
+      const companyId = profile.company_id;
+
+      // Verify Company Status (Enforce Server-Side Suspension)
+      const { data: companyRecord } = await dbClient
+        .from('companies')
+        .select('id, name, status, subscription_end_date, plan_name')
+        .eq('id', companyId)
+        .maybeSingle();
+
+      if (companyRecord && (companyRecord.status === 'suspended' || companyRecord.status === 'disabled')) {
+        return res.status(403).json({
+          success: false,
+          error: 'حساب شركتك موقوف حاليًا. يرجى التواصل مع إدارة DELIXA.',
+        });
+      }
+
+      // Check subscription expiry
+      if (companyRecord && companyRecord.subscription_end_date) {
+        const isExpired = new Date(companyRecord.subscription_end_date) < new Date();
+        if (isExpired && companyRecord.status === 'expired') {
+          return res.status(403).json({
+            success: false,
+            error: 'انتهت فترة اشتراك شركتك. يرجى تجديد الاشتراك لمتابعة إنشاء الشحنات.',
+          });
+        }
+      }
+
+      const body = req.body || {};
+      const {
+        merchant_id,
+        courier_id,
+        order_number,
+        customer_name,
+        customer_phone,
+        governorate,
+        city_area,
+        customer_address,
+        customer_landmark,
+        cod_amount,
+        shipping_fee,
+        delivery_date,
+        delivery_from,
+        delivery_to,
+        notes,
+        status,
+      } = body;
+
+      if (!merchant_id || !customer_name || !customer_phone || !customer_address) {
+        return res.status(400).json({
+          success: false,
+          error: 'يرجى استكمال جميع بيانات الشحنة الإلزامية (التاجر، اسم العميل، رقم الهاتف، العنوان)',
+        });
+      }
+
+      // Verify merchant belongs to caller company
+      const { data: merchant } = await dbClient
+        .from('merchants')
+        .select('id')
+        .eq('id', merchant_id)
+        .eq('company_id', companyId)
+        .maybeSingle();
+
+      if (!merchant) {
+        return res.status(400).json({
+          success: false,
+          error: 'التاجر المحدد غير تابع لهذه الشركة أو غير موجود',
+        });
+      }
+
+      // Verify courier if assigned
+      if (courier_id) {
+        const { data: courier } = await dbClient
+          .from('couriers')
+          .select('id')
+          .eq('id', courier_id)
+          .eq('company_id', companyId)
+          .maybeSingle();
+
+        if (!courier) {
+          return res.status(400).json({
+            success: false,
+            error: 'المندوب المحدد غير تابع لهذه الشركة',
+          });
+        }
+      }
+
+      const genOrderNum = order_number?.trim() || `ORD-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
+      const confirmationToken = crypto.randomBytes(16).toString('hex');
+      const initialStatus = status || (courier_id ? 'assigned' : 'pending');
+
+      const newOrderData: Record<string, any> = {
+        company_id: companyId,
+        merchant_id,
+        courier_id: courier_id || null,
+        order_number: genOrderNum,
+        customer_name: customer_name.trim(),
+        customer_phone: customer_phone.trim(),
+        governorate: governorate || 'القاهرة (Cairo)',
+        city_area: city_area || 'مدينة نصر',
+        customer_address: customer_address.trim(),
+        customer_landmark: customer_landmark?.trim() || null,
+        cod_amount: Number(cod_amount) || 0,
+        shipping_fee: Number(shipping_fee) || 0,
+        delivery_date: delivery_date || new Date().toISOString().split('T')[0],
+        delivery_from: delivery_from || '10:00',
+        delivery_to: delivery_to || '18:00',
+        notes: notes?.trim() || null,
+        status: initialStatus,
+        confirmation_token: confirmationToken,
+        customer_response_status: 'pending',
+        assigned_at: courier_id ? new Date().toISOString() : null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      let createdOrder: any = null;
+      const { data: insertedOrder, error: insertError } = await dbClient
+        .from('orders')
+        .insert([newOrderData])
+        .select('*')
+        .single();
+
+      if (insertError) {
+        if (insertError.message?.includes('shipping_fee')) {
+          const { shipping_fee, ...safeOrder } = newOrderData;
+          const retryRes = await dbClient.from('orders').insert([safeOrder]).select('*').single();
+          if (retryRes.error) {
+            return res.status(400).json({ success: false, error: retryRes.error.message });
+          }
+          createdOrder = retryRes.data;
+        } else {
+          return res.status(400).json({ success: false, error: insertError.message });
+        }
+      } else {
+        createdOrder = insertedOrder;
+      }
+
+      // Add order audit event
+      await dbClient.from('order_events').insert([{
+        company_id: companyId,
+        order_id: createdOrder.id,
+        event_type: 'created',
+        actor: profile.role || 'admin',
+        actor_name: profile.full_name || 'مدير النظام',
+        details: `تم إنشاء الشحنة رقم ${createdOrder.order_number} بنجاح`,
+        created_at: new Date().toISOString(),
+      }]);
+
+      return res.json({
+        success: true,
+        order: createdOrder,
+      });
+    } catch (err: any) {
+      console.error('API create-order exception:', err);
+      return res.status(500).json({
+        success: false,
+        error: err.message || 'حدث خطأ أثناء إنشاء الشحنة',
+      });
+    }
+  });
+
+  // 5. Company Status Verification Endpoint
+  app.get('/api/company/verify-status', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+
+      if (!token || !supabaseUrl || !supabaseAnonKey) {
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
+      }
+
+      const callerClient = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: userData, error: userError } = await callerClient.auth.getUser(token);
+
+      if (userError || !userData?.user) {
+        return res.status(401).json({ success: false, error: 'Invalid token' });
+      }
+
+      const dbClient = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      const { data: profile } = await dbClient
+        .from('profiles')
+        .select('company_id, role')
+        .eq('auth_user_id', userData.user.id)
+        .maybeSingle();
+
+      if (!profile?.company_id) {
+        return res.status(404).json({ success: false, error: 'Profile or company not found' });
+      }
+
+      const { data: company } = await dbClient
+        .from('companies')
+        .select('id, name, status, subscription_end_date, plan_name')
+        .eq('id', profile.company_id)
+        .maybeSingle();
+
+      const isSuspended = company ? (company.status === 'suspended' || company.status === 'disabled') : false;
+
+      return res.json({
+        success: true,
+        company: company || null,
+        isSuspended,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
     }
   });
 

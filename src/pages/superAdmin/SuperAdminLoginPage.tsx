@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Shield, Lock, User, Eye, EyeOff, Loader2, ArrowRight } from 'lucide-react';
+import { Lock, User, Eye, EyeOff, Loader2, ArrowRight } from 'lucide-react';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
+import { DelixaLogo } from '../../components/common/DelixaLogo';
 
 interface SuperAdminLoginPageProps {
   onNavigate: (path: string) => void;
@@ -47,11 +48,11 @@ export const SuperAdminLoginPage: React.FC<SuperAdminLoginPageProps> = ({ onNavi
       {/* Main Login Card */}
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative z-10">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-600/20 border border-blue-500/30 text-blue-400 mb-4 shadow-lg shadow-blue-500/10">
-            <Shield className="w-7 h-7 text-blue-400" />
+          <div className="flex justify-center mb-4">
+            <DelixaLogo theme="dark" size="lg" variant="full" badgeText="SUPER ADMIN" showTagline={true} />
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tight">لوحة تحكم DELIXA</h1>
-          <p className="text-xs text-slate-400 mt-1.5 font-medium">تسجيل دخول مالك المنصة وفريق الإدارة المركزية</p>
+          <h1 className="text-2xl font-black text-white tracking-tight">لوحة الإدارة والتحكم المركزية</h1>
+          <p className="text-xs text-slate-400 mt-1.5 font-medium">تسجيل دخول مالك المنصة وإدارة الاشتراكات والشركات</p>
         </div>
 
         {error && (
@@ -74,7 +75,7 @@ export const SuperAdminLoginPage: React.FC<SuperAdminLoginPageProps> = ({ onNavi
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="admin"
                 autoComplete="username"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl py-2.5 pr-10 pl-4 text-sm text-white placeholder-slate-500 outline-hidden transition"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl py-2.5 pr-10 pl-4 text-sm text-white placeholder-slate-500 outline-hidden transition min-h-[44px]"
                 required
               />
             </div>
@@ -93,48 +94,47 @@ export const SuperAdminLoginPage: React.FC<SuperAdminLoginPageProps> = ({ onNavi
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••"
                 autoComplete="current-password"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl py-2.5 pr-10 pl-10 text-sm text-white placeholder-slate-500 outline-hidden transition"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl py-2.5 pr-10 pl-10 text-sm text-white placeholder-slate-500 outline-hidden transition min-h-[44px]"
                 required
               />
               <button
                 type="button"
-                id="super-admin-toggle-pwd-btn"
+                id="super-admin-toggle-password-btn"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-500 hover:text-slate-300"
+                className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-500 hover:text-slate-300 transition"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
           </div>
 
-          <div className="pt-2">
-            <button
-              id="super-admin-login-submit-btn"
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 transition disabled:opacity-50 cursor-pointer"
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>جاري التحقق والدخول...</span>
-                </>
-              ) : (
-                <>
-                  <span>تسجيل الدخول للمنصة</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
-              )}
-            </button>
-          </div>
+          <button
+            id="super-admin-login-submit-btn"
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full mt-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 transition disabled:opacity-50 min-h-[46px] cursor-pointer"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>جاري تسجيل الدخول...</span>
+              </>
+            ) : (
+              <>
+                <span>دخول لوحة التحكم المركزية</span>
+                <ArrowRight className="w-4 h-4 rotate-180" />
+              </>
+            )}
+          </button>
         </form>
 
-        <div className="mt-8 pt-6 border-t border-slate-800/80 text-center">
+        <div className="mt-6 pt-4 border-t border-slate-800 text-center">
           <button
+            id="super-admin-back-to-home-btn"
             onClick={() => onNavigate('/')}
-            className="text-xs text-slate-400 hover:text-slate-200 transition"
+            className="text-xs text-slate-400 hover:text-white transition font-medium"
           >
-            العودة للواجهة العامة للمنصة
+            ← العودة للموقع الرئيسي
           </button>
         </div>
       </div>

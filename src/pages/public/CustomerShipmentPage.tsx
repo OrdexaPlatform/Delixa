@@ -24,6 +24,7 @@ import {
   HelpCircle,
   Clock3
 } from 'lucide-react';
+import { DelixaLogo } from '../../components/common/DelixaLogo';
 
 interface CustomerShipmentPageProps {
   token: string;
@@ -408,29 +409,25 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
   return (
     <div className="min-h-screen bg-slate-100/90 text-slate-800 pb-16 selection:bg-blue-600 selection:text-white" dir={isAr ? 'rtl' : 'ltr'}>
       {/* Sticky Branding Header */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-2xl mx-auto px-4 py-3.5 flex items-center justify-between">
+      <header className="bg-white border-b border-slate-200/90 sticky top-0 z-30 shadow-xs">
+        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center text-white font-black text-lg shadow-sm">
-              {shipment.company?.name ? shipment.company.name.charAt(0) : 'D'}
-            </div>
-            <div>
+            <DelixaLogo size="sm" badgeText="DELIVERY" />
+            <div className="border-s border-slate-200 ps-3">
               <div className="flex items-center gap-1.5">
-                <h1 className="font-bold text-slate-900 text-base leading-tight">
-                  {shipment.company?.name || 'Delixa Logistics'}
-                </h1>
-                <span title="خدمة توصيل موثقة">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span className="font-extrabold text-slate-900 text-xs sm:text-sm leading-tight">
+                  {shipment.company?.name || 'شركة الشحن والتوصيل'}
                 </span>
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
               </div>
-              <p className="text-xs text-slate-500 font-medium">{isAr ? 'تأكيد واستلام الشحنات السريعة' : 'Shipment Confirmation Portal'}</p>
+              <p className="text-[11px] text-slate-500 font-medium">بوابة تأكيد استلام الشحنة</p>
             </div>
           </div>
 
           {/* Language Toggle */}
           <button
             onClick={() => setLang(lang === 'ar' ? 'en' : 'ar')}
-            className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 bg-slate-50 hover:bg-slate-100 transition cursor-pointer"
+            className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 bg-slate-50 hover:bg-slate-100 transition cursor-pointer min-h-[38px]"
           >
             {lang === 'ar' ? 'English' : 'عربي'}
           </button>
@@ -439,6 +436,38 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
 
       {/* Main Content Area */}
       <main className="max-w-2xl mx-auto px-4 pt-5 space-y-4">
+        {/* Prominent Store Notification Card */}
+        <div className="bg-gradient-to-r from-blue-900 to-indigo-950 text-white rounded-3xl p-5 shadow-lg border border-blue-800">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] uppercase tracking-wider font-bold text-blue-300 flex items-center gap-1">
+              <Package className="w-3.5 h-3.5" />
+              {isAr ? 'إشعار وصول شحنة جديدة' : 'New Shipment Notice'}
+            </span>
+            <span className="text-xs font-mono font-bold bg-blue-800/80 text-blue-200 px-2.5 py-0.5 rounded-full border border-blue-700">
+              #{shipment.order_number}
+            </span>
+          </div>
+          <h2 className="text-lg sm:text-xl font-black leading-tight text-white">
+            {isAr ? (
+              <>
+                لديك شحنة جاهزة للتسليم من متجر{' '}
+                <span className="text-amber-300 underline decoration-amber-400/50">
+                  {shipment.merchant?.store_name || shipment.merchant?.brand_name || 'المتجر'}
+                </span>
+              </>
+            ) : (
+              <>
+                You have a delivery from{' '}
+                <span className="text-amber-300">
+                  {shipment.merchant?.store_name || shipment.merchant?.brand_name || 'Merchant'}
+                </span>
+              </>
+            )}
+          </h2>
+          <p className="text-xs text-blue-200/90 mt-1.5">
+            {isAr ? 'يرجى مراجعة تفاصيل العنوان والمبلغ وتأكيد الاستلام لتسهيل وصول المندوب إليك.' : 'Please review the delivery details, amount, and confirm your window.'}
+          </p>
+        </div>
         {/* Dynamic Success Alert Banner */}
         {successNotice && (
           <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-2xl p-4 flex items-start gap-3 shadow-xs animate-fade-in">

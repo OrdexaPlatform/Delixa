@@ -53,6 +53,7 @@ const AppRouter: React.FC = () => {
   const [currentPath, setCurrentPath] = useState<string>(() => {
     return window.location.pathname || '/';
   });
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [platformSettings, setPlatformSettings] = useState<{
     maintenance_mode?: boolean;
     maintenance_message?: string;
@@ -61,6 +62,7 @@ const AppRouter: React.FC = () => {
   }>({});
 
   const navigate = (path: string) => {
+    setMobileMenuOpen(false);
     window.history.pushState({}, '', path);
     setCurrentPath(path);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -217,17 +219,24 @@ const AppRouter: React.FC = () => {
 
   // 4. Authenticated Application Layout with Header & Sidebar
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <Header navigate={navigate} currentPath={currentPath} />
+    <div className="min-h-screen bg-slate-50 flex flex-col antialiased">
+      <Header 
+        navigate={navigate} 
+        currentPath={currentPath} 
+        onToggleMobileMenu={() => setMobileMenuOpen(prev => !prev)} 
+      />
 
-      <div className="flex-1 flex max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 gap-6">
-        {/* Persistent Sidebar */}
-        <div className="hidden md:block w-60 shrink-0">
-          <Sidebar currentPath={currentPath} navigate={navigate} />
-        </div>
+      <div className="flex-1 flex max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 gap-6">
+        {/* Desktop & Mobile Responsive Sidebar */}
+        <Sidebar 
+          currentPath={currentPath} 
+          navigate={navigate} 
+          mobileOpen={mobileMenuOpen} 
+          onCloseMobile={() => setMobileMenuOpen(false)} 
+        />
 
         {/* Dynamic Main Workspace Content */}
-        <main className="flex-1 min-w-0">
+        <main className="flex-1 min-w-0 pb-16 md:pb-6">
           {/* Admin Routes with Strict AdminRouteGuard */}
           {(currentPath === '/dashboard' || currentPath === '/admin/dashboard') && (
             <AdminRouteGuard navigate={navigate}>

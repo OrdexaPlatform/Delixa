@@ -7,13 +7,13 @@ import {
   Globe, 
   LogOut, 
   ShieldCheck, 
-  Truck, 
   ChevronDown, 
   Menu,
   Sparkles,
   ArrowRightLeft,
   RotateCcw
 } from 'lucide-react';
+import { DelixaLogo } from './DelixaLogo';
 import { NotificationCenter } from './NotificationCenter';
 
 interface HeaderProps {
@@ -24,7 +24,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, currentPath, navigate }) => {
   const { session, logout, loginDemoUser, resetDemoData, sessionMode } = useAuth();
-  const { language, setLanguage, t, isRTL } = useLanguage();
+  const { language, setLanguage, t } = useLanguage();
   const { showToast } = useToast();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showDemoSwitcher, setShowDemoSwitcher] = useState(false);
@@ -55,60 +55,52 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, currentPath,
   };
 
   return (
-    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 gap-4">
+    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-xs">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16 gap-3">
           
-          {/* Left: Mobile Menu Trigger & Brand / Company context */}
-          <div className="flex items-center gap-3">
+          {/* Left: Mobile Menu Trigger & Official DELIXA Logo */}
+          <div className="flex items-center gap-2.5 sm:gap-3">
             {session && onToggleMobileMenu && (
               <button
                 id="mobile-menu-toggle"
                 onClick={onToggleMobileMenu}
-                className="lg:hidden p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
-                aria-label="Toggle menu"
+                className="lg:hidden p-2 text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer"
+                aria-label="القائمة الرئيسية"
               >
                 <Menu className="w-5 h-5" />
               </button>
             )}
 
-            {/* Brand Logo */}
+            {/* Official DELIXA Logo */}
             <div 
               id="brand-logo"
               onClick={() => navigate(session ? (session.profile.role === 'admin' ? '/dashboard' : '/courier/dashboard') : '/')}
-              className="flex items-center gap-2.5 cursor-pointer group"
+              className="cursor-pointer group py-1"
             >
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-700 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform">
-                <Truck className="w-5 h-5" />
-              </div>
-              <div className="flex flex-col">
-                <span className="font-extrabold text-xl tracking-tight text-slate-900 flex items-center gap-1.5">
-                  Delixa
-                  <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200/60">
-                    EG
-                  </span>
-                </span>
-                <span className="text-[10px] text-slate-500 hidden sm:inline -mt-0.5">
-                  {t.brandTagline}
-                </span>
-              </div>
+              <DelixaLogo 
+                size="sm" 
+                variant="full" 
+                badgeText="EG" 
+                showTagline={false} 
+              />
             </div>
 
             {/* Active Company & Session Mode Badge */}
             {session && (
-              <div className="hidden md:flex items-center gap-2 ms-4 px-3 py-1.5 bg-slate-100/80 rounded-lg border border-slate-200/80 text-xs">
+              <div className="hidden lg:flex items-center gap-2 ms-3 px-3 py-1.5 bg-slate-50 hover:bg-slate-100/80 rounded-xl border border-slate-200/80 text-xs transition-colors">
                 <Building2 className="w-3.5 h-3.5 text-blue-600" />
-                <span className="font-semibold text-slate-700 max-w-[180px] truncate">
+                <span className="font-bold text-slate-800 max-w-[160px] truncate">
                   {session.company.name}
                 </span>
                 {isDemo ? (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-800 rounded">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 rounded-md">
                     <Sparkles className="w-2.5 h-2.5 text-amber-600" />
-                    <span>حساب تجريبي (Demo)</span>
+                    <span>تجريبي</span>
                   </span>
                 ) : (
-                  <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-800 rounded">
-                    Supabase Live
+                  <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md">
+                    Live
                   </span>
                 )}
               </div>

@@ -533,3 +533,111 @@ CREATE POLICY "Merchant settlements insert policy"
 
 -- Enable Realtime
 ALTER PUBLICATION supabase_realtime ADD TABLE orders, order_events, notifications;
+
+-- ==============================================================================
+-- 10. SUPER ADMIN PLATFORM TABLES
+-- ==============================================================================
+
+-- 10.1 Platform Admins
+CREATE TABLE IF NOT EXISTS public.platform_admins (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    username VARCHAR(100) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    full_name VARCHAR(255) NOT NULL,
+    email VARCHAR(255),
+    phone VARCHAR(50),
+    role VARCHAR(50) NOT NULL DEFAULT 'viewer',
+    permissions JSONB NOT NULL DEFAULT '["dashboard.view"]'::jsonb,
+    status VARCHAR(50) NOT NULL DEFAULT 'active',
+    is_primary BOOLEAN NOT NULL DEFAULT false,
+    last_login_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 10.2 Platform Sessions
+CREATE TABLE IF NOT EXISTS public.platform_sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    token VARCHAR(255) UNIQUE NOT NULL,
+    admin_id UUID NOT NULL REFERENCES public.platform_admins(id) ON DELETE CASCADE,
+    ip_address VARCHAR(100),
+    user_agent TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+-- 10.3 Platform Subscription Plans
+CREATE TABLE IF NOT EXISTS public.platform_subscription_plans (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    code VARCHAR(100) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    currency VARCHAR(10) NOT NULL DEFAULT 'EGP',
+    billing_cycle VARCHAR(50) NOT NULL DEFAULT 'monthly',
+    trial_days INT NOT NULL DEFAULT 14,
+    order_limit INT NOT NULL DEFAULT 1000,
+    courier_limit INT NOT NULL DEFAULT 10,
+    merchant_limit INT NOT NULL DEFAULT 50,
+    features JSONB DEFAULT '[]'::jsonb,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 10.4 Platform Subscriptions
+CREATE TABLE IF NOT EXISTS public.platform_subscriptions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    company_id UUID NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
+    plan_id UUID REFERENCES public.platform_subscription_plans(id),
+    plan_name VARCHAR(255) NOT NULL,
+    plan_code VARCHAR(100) NOT NULL,
+    start_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    end_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    currency VARCHAR(10) NOT NULL DEFAULT 'EGP',
+    billing_cycle VARCHAR(50) NOT NULL DEFAULT 'monthly',
+    is_trial BOOLEAN NOT NULL DEFAULT false,
+    status VARCHAR(50) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 10.5 Platform Payments
+CREATE TABLE IF NOT EXISTS public.platform_payments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    company_id UUID NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
+    subscription_id UUID REFERENCES public.platform_subscriptions(id),
+    plan_name VARCHAR(255) NOT NULL,
+    amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    currency VARCHAR(10) NOT NULL DEFAULT 'EGP',
+    payment_method VARCHAR(100) NOT NULL DEFAULT 'bank_transfer',
+    transaction_id VARCHAR(255),
+    status VARCHAR(50) NOT NULL DEFAULT 'completed',
+    invoice_number VARCHAR(100) UNIQUE,
+    notes TEXT,
+    paid_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 10.6 Platform Activity Logs
+CREATE TABLE IF NOT EXISTS public.platform_activity_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    admin_id UUID,
+    admin_name VARCHAR(255) NOT NULL,
+    action VARCHAR(100) NOT NULL,
+    target_type VARCHAR(100) NOT NULL,
+    target_id VARCHAR(255),
+    details TEXT,
+    meta JSONB DEFAULT '{}'::jsonb,
+    ip_address VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 10.7 Platform System Settings
+CREATE TABLE IF NOT EXISTS public.platform_settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value JSONB NOT NULL,
+    updated_by VARCHAR(255),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);

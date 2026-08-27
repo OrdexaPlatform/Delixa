@@ -53,6 +53,10 @@ export interface Company {
   email: string;
   address: string;
   logo_url?: string;
+  status?: CompanyStatus;
+  subscription_status?: string;
+  subscription_end_date?: string;
+  plan_name?: string;
   delivery_slots?: DeliverySlot[];
   shipping_pricing?: ShippingPricingSettings;
   created_at: string;
@@ -423,6 +427,9 @@ export interface AuthSession {
   courier?: Courier; // populated if role is courier
   courier_id?: string;
   employee_id?: string;
+  session?: {
+    access_token?: string;
+  };
 }
 
 export interface ToastMessage {
@@ -469,7 +476,8 @@ export interface AppNotification {
 // SUPER ADMIN & PLATFORM MANAGEMENT TYPES
 // ==============================================================================
 
-export type SuperAdminRole = 'super_admin' | 'finance' | 'support' | 'operations' | 'staff';
+export type SuperAdminRole = 'super_admin' | 'finance' | 'support' | 'operations' | 'viewer' | 'staff';
+export type PlatformRole = SuperAdminRole;
 
 export type SuperAdminPermission =
   | '*'
@@ -500,10 +508,24 @@ export interface PlatformAdmin {
   role: SuperAdminRole;
   permissions: SuperAdminPermission[];
   status: 'active' | 'disabled';
+  is_active?: boolean;
   is_primary?: boolean;
   last_login_at?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface OnlineCompanyStatus {
+  company_id: string;
+  company_name: string;
+  active_users_count: number;
+  last_seen: string;
+  users?: {
+    user_id?: string;
+    user_name?: string;
+    role?: string;
+    last_seen_at?: string;
+  }[];
 }
 
 export interface SuperAdminSession {
@@ -624,6 +646,22 @@ export interface PlatformGeneralSettings {
   default_timezone: string;
   maintenance_mode: boolean;
   maintenance_message?: string;
+}
+
+export interface PlatformSettings {
+  platform_name: string;
+  support_email: string;
+  support_phone: string;
+  allow_registration?: boolean;
+  maintenance_mode: boolean;
+  maintenance_message?: string;
+  default_trial_days: number;
+  currency_default?: string;
+  default_currency?: string;
+  instapay_address?: string;
+  vodafone_cash_number?: string;
+  require_email_verification?: boolean;
+  [key: string]: any;
 }
 
 export interface PlatformHealthStatus {

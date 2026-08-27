@@ -81,6 +81,7 @@ export const SuperAdminStaffPage: React.FC<SuperAdminStaffPageProps> = ({ onNavi
 
   const handleOpenEdit = (member: PlatformAdmin) => {
     setEditingStaff(member);
+    const isActive = member.status ? member.status === 'active' : Boolean(member.is_active);
     setForm({
       username: member.username,
       password: '',
@@ -88,7 +89,7 @@ export const SuperAdminStaffPage: React.FC<SuperAdminStaffPageProps> = ({ onNavi
       email: member.email || '',
       phone: member.phone || '',
       role: member.role,
-      is_active: member.is_active,
+      is_active: isActive,
     });
     setFormError(null);
     setIsModalOpen(true);
@@ -160,6 +161,8 @@ export const SuperAdminStaffPage: React.FC<SuperAdminStaffPageProps> = ({ onNavi
         return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">دعم فني (Support)</span>;
       case 'operations':
         return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">عمليات (Ops)</span>;
+      case 'viewer':
+        return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-500/10 text-slate-400 border border-slate-500/20">مشاهد فقط (Viewer)</span>;
       default:
         return <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-800 text-slate-300">{role}</span>;
     }
@@ -245,7 +248,7 @@ export const SuperAdminStaffPage: React.FC<SuperAdminStaffPageProps> = ({ onNavi
                     <td className="py-3.5 px-4 font-mono text-slate-300 font-semibold">{member.username}</td>
                     <td className="py-3.5 px-4">{getRoleBadge(member.role)}</td>
                     <td className="py-3.5 px-4">
-                      {member.is_active ? (
+                      {member.status === 'active' || member.is_active ? (
                         <span className="text-emerald-400 font-bold flex items-center gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           مفعّل
@@ -366,6 +369,7 @@ export const SuperAdminStaffPage: React.FC<SuperAdminStaffPageProps> = ({ onNavi
                     <option value="finance">Finance (المدفوعات والاشتراكات)</option>
                     <option value="support">Support (الدعم الفني والشركات)</option>
                     <option value="operations">Operations (التشغيل والمتابعة)</option>
+                    <option value="viewer">Viewer (مشاهدة وقراءة فقط)</option>
                   </select>
                 </div>
               </div>
