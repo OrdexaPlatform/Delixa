@@ -22,6 +22,7 @@ import {
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
 import { DelixaLogo } from '../common/DelixaLogo';
 import { GlobalSearchModal } from './GlobalSearchModal';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SuperAdminLayoutProps {
   children: React.ReactNode;
@@ -48,22 +49,16 @@ export const SuperAdminLayout: React.FC<SuperAdminLayoutProps> = ({
       if (!token) return;
       try {
         const [presRes, setRes] = await Promise.all([
-          fetch('/api/super-admin/presence', { headers: { Authorization: `Bearer ${token}` } }),
-          fetch('/api/platform/public-settings'),
+          safeFetchJson<any>('/api/super-admin/presence', { headers: { Authorization: `Bearer ${token}` } }),
+          safeFetchJson<any>('/api/platform/public-settings'),
         ]);
 
-        if (presRes.ok) {
-          const presData = await presRes.json();
-          if (isMounted && presData.success) {
-            setOnlineCount(presData.onlineCount || 0);
-          }
+        if (presRes.ok && presRes.data?.success && isMounted) {
+          setOnlineCount(presRes.data.onlineCount || 0);
         }
 
-        if (setRes.ok) {
-          const setData = await setRes.json();
-          if (isMounted && setData.success && setData.settings) {
-            setMaintenanceMode(Boolean(setData.settings.maintenance_mode));
-          }
+        if (setRes.ok && setRes.data?.success && setRes.data?.settings && isMounted) {
+          setMaintenanceMode(Boolean(setRes.data.settings.maintenance_mode));
         }
       } catch {
         // silent

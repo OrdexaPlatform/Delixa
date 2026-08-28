@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, X, Building2, Package, Store, Truck, DollarSign, ArrowLeft, Loader2 } from 'lucide-react';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SearchResult {
   type: 'company' | 'order' | 'merchant' | 'courier' | 'payment';
@@ -43,16 +44,13 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({ isOpen, on
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/super-admin/search?q=${encodeURIComponent(query.trim())}`, {
+        const { ok, data } = await safeFetchJson<any>(`/api/super-admin/search?q=${encodeURIComponent(query.trim())}`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },
         });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success) {
-            setResults(data.results || []);
-          }
+        if (ok && data?.success) {
+          setResults(data.results || []);
         }
       } catch (err) {
         console.error('Search error:', err);

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
 import { PlatformActivityLog } from '../../types';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SuperAdminActivityPageProps {
   onNavigate: (path: string) => void;
@@ -27,14 +28,11 @@ export const SuperAdminActivityPage: React.FC<SuperAdminActivityPageProps> = ({ 
   const fetchLogs = async (isManual = false) => {
     if (isManual) setRefreshing(true);
     try {
-      const res = await fetch('/api/super-admin/activity-logs?limit=100', {
+      const { ok, data } = await safeFetchJson<any>('/api/super-admin/activity-logs?limit=100', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setLogs(data.logs || []);
-        }
+      if (ok && data?.success) {
+        setLogs(data.logs || []);
       }
     } catch (err) {
       console.error('Failed to load logs:', err);

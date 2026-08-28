@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
 import { PlatformSettings } from '../../types';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SuperAdminSettingsPageProps {
   onNavigate: (path: string) => void;
@@ -43,14 +44,11 @@ export const SuperAdminSettingsPage: React.FC<SuperAdminSettingsPageProps> = ({ 
 
   const fetchSettings = async () => {
     try {
-      const res = await fetch('/api/super-admin/settings', {
+      const { ok, data } = await safeFetchJson<any>('/api/super-admin/settings', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.settings) {
-          setSettings(prev => ({ ...prev, ...data.settings }));
-        }
+      if (ok && data?.success && data?.settings) {
+        setSettings(prev => ({ ...prev, ...data.settings }));
       }
     } catch (err) {
       console.error('Failed to load settings:', err);
@@ -70,7 +68,7 @@ export const SuperAdminSettingsPage: React.FC<SuperAdminSettingsPageProps> = ({ 
     setSavedSuccess(false);
 
     try {
-      const res = await fetch('/api/super-admin/settings', {
+      const { ok, data, error } = await safeFetchJson<any>('/api/super-admin/settings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -79,12 +77,11 @@ export const SuperAdminSettingsPage: React.FC<SuperAdminSettingsPageProps> = ({ 
         body: JSON.stringify(settings),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (ok && data?.success) {
         setSavedSuccess(true);
         setTimeout(() => setSavedSuccess(false), 4000);
       } else {
-        setSaveError(data.error || 'فشل حفظ الإعدادات');
+        setSaveError(data?.error || error || 'فشل حفظ الإعدادات');
       }
     } catch (err: any) {
       setSaveError(err.message || 'حدث خطأ أثناء الحفظ');

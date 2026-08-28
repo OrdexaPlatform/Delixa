@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { PlatformAdmin, SuperAdminSession, SuperAdminPermission } from '../types';
+import { safeFetchJson } from '../utils/apiClient';
 
 interface SuperAdminContextType {
   session: SuperAdminSession | null;
@@ -36,23 +37,21 @@ export const SuperAdminProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return;
     }
     try {
-      const res = await fetch('/api/super-admin/auth/me', {
+      const { ok, status, data } = await safeFetchJson<any>('/api/super-admin/auth/me', {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.admin) {
-          const updatedSession: SuperAdminSession = {
-            token,
-            admin: data.admin,
-            expires_at: session?.expires_at || new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
-          };
-          setSession(updatedSession);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSession));
-        }
-      } else if (res.status === 401 || res.status === 403) {
+
+      if (ok && data?.success && data?.admin) {
+        const updatedSession: SuperAdminSession = {
+          token,
+          admin: data.admin,
+          expires_at: session?.expires_at || new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
+        };
+        setSession(updatedSession);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSession));
+      } else if (status === 401 || status === 403) {
         // Session invalid
         setSession(null);
         localStorage.removeItem(STORAGE_KEY);
@@ -71,20 +70,20 @@ export const SuperAdminProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const login = async (username: string, password: string): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/super-admin/auth/login', {
+      const { ok, data, error } = await safeFetchJson<any>('/api/super-admin/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
-      const data = await res.json();
-      if (res.ok && data.success && data.session) {
+
+      if (ok && data?.success && data?.session) {
         setSession(data.session);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data.session));
         setIsLoading(false);
         return { success: true };
       } else {
         setIsLoading(false);
-        return { success: false, error: data.error || 'فشل تسجيل الدخول' };
+        return { success: false, error: data?.error || error || 'فشل تسجيل الدخول' };
       }
     } catch (err: any) {
       setIsLoading(false);
@@ -95,7 +94,7 @@ export const SuperAdminProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const logout = async () => {
     if (token) {
       try {
-        await fetch('/api/super-admin/auth/logout', {
+        await safeFetchJson('/api/super-admin/auth/logout', {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
         });

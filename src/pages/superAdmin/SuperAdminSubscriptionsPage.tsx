@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
 import { PlatformSubscription, PlatformSubscriptionPlan } from '../../types';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SuperAdminSubscriptionsPageProps {
   onNavigate: (path: string) => void;
@@ -50,16 +51,13 @@ export const SuperAdminSubscriptionsPage: React.FC<SuperAdminSubscriptionsPagePr
   const fetchSubscriptions = async (isManual = false) => {
     if (isManual) setRefreshing(true);
     try {
-      const res = await fetch('/api/super-admin/subscriptions', {
+      const { ok, data } = await safeFetchJson<any>('/api/super-admin/subscriptions', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setSubscriptions(data.subscriptions || []);
-          setPlans(data.plans || []);
-          setCompanies(data.companies || []);
-        }
+      if (ok && data?.success) {
+        setSubscriptions(data.subscriptions || []);
+        setPlans(data.plans || []);
+        setCompanies(data.companies || []);
       }
     } catch (err) {
       console.error('Failed to load subscriptions:', err);
@@ -130,7 +128,7 @@ export const SuperAdminSubscriptionsPage: React.FC<SuperAdminSubscriptionsPagePr
       const url = editingPlan ? `/api/super-admin/plans/${editingPlan.id}` : '/api/super-admin/plans';
       const method = editingPlan ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const { ok, data, error } = await safeFetchJson<any>(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -139,12 +137,11 @@ export const SuperAdminSubscriptionsPage: React.FC<SuperAdminSubscriptionsPagePr
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (ok && data?.success) {
         setIsPlanModalOpen(false);
         await fetchSubscriptions();
       } else {
-        setPlanError(data.error || 'فشل حفظ الباقة');
+        setPlanError(data?.error || error || 'فشل حفظ الباقة');
       }
     } catch (err: any) {
       setPlanError(err.message || 'حدث خطأ في الخادم');

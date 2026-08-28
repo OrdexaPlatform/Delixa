@@ -15,6 +15,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SuperAdminHealthPageProps {
   onNavigate: (path: string) => void;
@@ -29,14 +30,11 @@ export const SuperAdminHealthPage: React.FC<SuperAdminHealthPageProps> = ({ onNa
   const fetchHealth = async (isManual = false) => {
     if (isManual) setRefreshing(true);
     try {
-      const res = await fetch('/api/super-admin/system-health', {
+      const { ok, data } = await safeFetchJson<any>('/api/super-admin/system-health', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setHealth(data.health);
-        }
+      if (ok && data?.success) {
+        setHealth(data.health);
       }
     } catch (err) {
       console.error('Failed to load health:', err);

@@ -9,6 +9,7 @@ import { Sidebar } from './components/common/Sidebar';
 import { AdminRouteGuard } from './components/auth/AdminRouteGuard';
 import { CourierRouteGuard } from './components/auth/CourierRouteGuard';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
+import { safeFetchJson } from './utils/apiClient';
 
 // Super Admin Components & Pages
 import { SuperAdminRouteGuard } from './components/superAdmin/SuperAdminRouteGuard';
@@ -91,10 +92,9 @@ const AppRouter: React.FC = () => {
 
   // Fetch Public Platform Settings (for maintenance mode check)
   useEffect(() => {
-    fetch('/api/platform/public-settings')
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.settings) {
+    safeFetchJson<any>('/api/platform/public-settings')
+      .then(({ ok, data }) => {
+        if (ok && data?.success && data?.settings) {
           setPlatformSettings(data.settings);
         }
       })

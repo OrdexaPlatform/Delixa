@@ -25,6 +25,7 @@ import {
   Clock3
 } from 'lucide-react';
 import { DelixaLogo } from '../../components/common/DelixaLogo';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface CustomerShipmentPageProps {
   token: string;
@@ -70,14 +71,11 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
     }
 
     try {
-      const response = await fetch(`/api/customer/shipment/${encodeURIComponent(cleanToken)}`, {
+      const { ok, status, data } = await safeFetchJson<any>(`/api/customer/shipment/${encodeURIComponent(cleanToken)}`, {
         method: 'GET',
-        headers: { 'Accept': 'application/json' },
       });
 
-      const data = await response.json();
-
-      if (response.ok && data.success && data.shipment) {
+      if (ok && data?.success && data?.shipment) {
         setShipment(data.shipment);
         setErrorCode(null);
         setErrorMessage(null);
@@ -85,14 +83,14 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
         return;
       }
 
-      if (response.status === 410 || data.code === 'EXPIRED') {
+      if (status === 410 || data?.code === 'EXPIRED') {
         setErrorCode('EXPIRED');
-        setErrorMessage(data.error || (isAr ? 'عذراً، هذا الرابط انتهت صلاحيته' : 'This link has expired'));
+        setErrorMessage(data?.error || (isAr ? 'عذراً، هذا الرابط انتهت صلاحيته' : 'This link has expired'));
         setLoading(false);
         return;
       }
 
-      if (response.status === 404 || data.code === 'NOT_FOUND') {
+      if (status === 404 || data?.code === 'NOT_FOUND') {
         // Fallback check in local db if running in mock/demo mode
         const fallback = await db.getOrderByToken(cleanToken);
         if (fallback && fallback.order) {
@@ -141,13 +139,13 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
         }
 
         setErrorCode('NOT_FOUND');
-        setErrorMessage(data.error || (isAr ? 'لم يتم العثور على الشحنة. قد يكون الرابط خاطئاً.' : 'Shipment not found.'));
+        setErrorMessage(data?.error || (isAr ? 'لم يتم العثور على الشحنة. قد يكون الرابط خاطئاً.' : 'Shipment not found.'));
         setLoading(false);
         return;
       }
 
       setErrorCode('ERROR');
-      setErrorMessage(data.error || (isAr ? 'تعذر جلب تفاصيل الشحنة' : 'Failed to fetch shipment details'));
+      setErrorMessage(data?.error || (isAr ? 'تعذر جلب تفاصيل الشحنة' : 'Failed to fetch shipment details'));
     } catch (err: any) {
       console.warn('Backend API connection warning, trying fallback client store:', err);
       const fallback = await db.getOrderByToken(cleanToken);
@@ -213,16 +211,14 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
     setSuccessNotice(null);
 
     try {
-      const response = await fetch(`/api/customer/shipment/${encodeURIComponent(token)}/confirm`, {
+      const { ok, data, error } = await safeFetchJson<any>(`/api/customer/shipment/${encodeURIComponent(token)}/confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ note: customerNote }),
       });
 
-      const res = await response.json();
-
-      if (response.ok && res.success && res.shipment) {
-        setShipment(res.shipment);
+      if (ok && data?.success && data?.shipment) {
+        setShipment(data.shipment);
         setSuccessNotice(
           isAr
             ? 'تم تأكيد موعد استلام الشحنة بنجاح! مندوب التوصيل في طريقه إليك في الموعد المحدد.'
@@ -235,7 +231,7 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
           loadShipment();
           setSuccessNotice(isAr ? 'تم تأكيد موعد الاستلام بنجاح!' : 'Delivery confirmed successfully!');
         } else {
-          alert(res.error || fbRes.error || (isAr ? 'حدث خطأ أثناء التأكيد' : 'Confirmation error'));
+          alert(data?.error || error || fbRes.error || (isAr ? 'حدث خطأ أثناء التأكيد' : 'Confirmation error'));
         }
       }
     } catch (e: any) {
@@ -253,7 +249,7 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
     setSuccessNotice(null);
 
     try {
-      const response = await fetch(`/api/customer/shipment/${encodeURIComponent(token)}/reschedule`, {
+      const { ok, data, error } = await safeFetchJson<any>(`/api/customer/shipment/${encodeURIComponent(token)}/reschedule`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -264,10 +260,8 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
         }),
       });
 
-      const res = await response.json();
-
-      if (response.ok && res.success && res.shipment) {
-        setShipment(res.shipment);
+      if (ok && data?.success && data?.shipment) {
+        setShipment(data.shipment);
         setActiveTab('details');
         setSuccessNotice(
           isAr
@@ -282,7 +276,7 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
           setActiveTab('details');
           setSuccessNotice(isAr ? 'تم تعديل الموعد بنجاح!' : 'Rescheduled successfully!');
         } else {
-          alert(res.error || fbRes.error || 'حدث خطأ أثناء تعديل الموعد');
+          alert(data?.error || error || fbRes.error || 'حدث خطأ أثناء تعديل الموعد');
         }
       }
     } catch (e: any) {
@@ -301,16 +295,14 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
     const finalReason = cancelReasonCustom.trim() || cancelReasonPreset;
 
     try {
-      const response = await fetch(`/api/customer/shipment/${encodeURIComponent(token)}/cancel`, {
+      const { ok, data, error } = await safeFetchJson<any>(`/api/customer/shipment/${encodeURIComponent(token)}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: finalReason }),
       });
 
-      const res = await response.json();
-
-      if (response.ok && res.success && res.shipment) {
-        setShipment(res.shipment);
+      if (ok && data?.success && data?.shipment) {
+        setShipment(data.shipment);
         setShowCancelModal(false);
         setActiveTab('details');
         setSuccessNotice(isAr ? 'تم إلغاء الشحنة بناءً على طلبك.' : 'Shipment cancelled upon your request.');
@@ -323,7 +315,7 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
           setActiveTab('details');
           setSuccessNotice(isAr ? 'تم إلغاء الشحنة بنجاح.' : 'Cancelled successfully.');
         } else {
-          alert(res.error || fbRes.error || 'حدث خطأ أثناء إلغاء الشحنة');
+          alert(data?.error || error || fbRes.error || 'حدث خطأ أثناء إلغاء الشحنة');
         }
       }
     } catch (e: any) {

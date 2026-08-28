@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
 import { OnlineCompanyStatus } from '../../types';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SuperAdminOnlinePageProps {
   onNavigate: (path: string) => void;
@@ -25,14 +26,11 @@ export const SuperAdminOnlinePage: React.FC<SuperAdminOnlinePageProps> = ({ onNa
   const fetchOnlineStatus = async (isManual = false) => {
     if (isManual) setRefreshing(true);
     try {
-      const res = await fetch('/api/super-admin/presence', {
+      const { ok, data } = await safeFetchJson<any>('/api/super-admin/presence', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setOnlineCompanies(data.companies || []);
-        }
+      if (ok && data?.success) {
+        setOnlineCompanies(data.companies || []);
       }
     } catch (err) {
       console.error('Failed to load presence:', err);

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { AlertTriangle, Phone, Mail, LogOut, ShieldAlert } from 'lucide-react';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface AdminRouteGuardProps {
   children: React.ReactNode;
@@ -18,14 +19,13 @@ export const AdminRouteGuard: React.FC<AdminRouteGuardProps> = ({ children, navi
   // Verify real-time status from backend if session exists
   useEffect(() => {
     if (activeAdmin?.session?.access_token) {
-      fetch('/api/company/verify-status', {
+      safeFetchJson<any>('/api/company/verify-status', {
         headers: {
           Authorization: `Bearer ${activeAdmin.session.access_token}`,
         },
       })
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success && data.isSuspended !== undefined) {
+        .then(({ ok, data }) => {
+          if (ok && data?.success && data?.isSuspended !== undefined) {
             setIsSuspended(Boolean(data.isSuspended));
           }
         })

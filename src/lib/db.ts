@@ -26,6 +26,7 @@ import {
 } from '../types';
 import { hashPassword, verifyPassword, normalizeEmployeeId } from './crypto';
 import { demoDb, DEMO_COMPANY_ID } from './demoDb';
+import { safeFetchJson } from '../utils/apiClient';
 
 // Session Mode Control for clean data separation
 let currentSessionMode: SessionMode = 'production';
@@ -492,7 +493,7 @@ const supabaseDb = {
       const { data: sessData } = await supabase.auth.getSession();
       const token = sessData?.session?.access_token;
       if (token && typeof window !== 'undefined') {
-        const res = await fetch('/api/admin/create-courier', {
+        const { ok, data: json } = await safeFetchJson<any>('/api/admin/create-courier', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -508,12 +509,9 @@ const supabaseDb = {
           }),
         });
 
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success && json.courier) {
-            notifyOrderUpdated();
-            return json.courier as Courier;
-          }
+        if (ok && json?.success && json.courier) {
+          notifyOrderUpdated();
+          return json.courier as Courier;
         }
       }
     } catch (serverErr) {
@@ -719,7 +717,7 @@ const supabaseDb = {
 
     if (token) {
       try {
-        const apiRes = await fetch('/api/admin/create-merchant', {
+        const { ok, data: apiJson, error: apiErr } = await safeFetchJson<any>('/api/admin/create-merchant', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -727,11 +725,10 @@ const supabaseDb = {
           },
           body: JSON.stringify(payload),
         });
-        const apiJson = await apiRes.json();
-        if (apiJson.success && apiJson.merchant) {
+        if (ok && apiJson?.success && apiJson.merchant) {
           notifyOrderUpdated();
           return formatMerchantRow(apiJson.merchant);
-        } else if (apiJson.error) {
+        } else if (apiJson?.error) {
           throw new Error(apiJson.error);
         }
       } catch (e: any) {
@@ -798,7 +795,7 @@ const supabaseDb = {
 
     if (token) {
       try {
-        const apiRes = await fetch(`/api/admin/update-merchant/${id}`, {
+        const { ok, data: apiJson } = await safeFetchJson<any>(`/api/admin/update-merchant/${id}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -806,11 +803,10 @@ const supabaseDb = {
           },
           body: JSON.stringify(updates),
         });
-        const apiJson = await apiRes.json();
-        if (apiJson.success && apiJson.merchant) {
+        if (ok && apiJson?.success && apiJson.merchant) {
           notifyOrderUpdated();
           return formatMerchantRow(apiJson.merchant);
-        } else if (apiJson.error) {
+        } else if (apiJson?.error) {
           throw new Error(apiJson.error);
         }
       } catch (e: any) {
@@ -926,7 +922,7 @@ const supabaseDb = {
       const { data: sessData } = await supabase.auth.getSession();
       const token = sessData?.session?.access_token;
       if (token && typeof window !== 'undefined') {
-        const res = await fetch('/api/admin/create-order', {
+        const { ok, data: json } = await safeFetchJson<any>('/api/admin/create-order', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -935,11 +931,10 @@ const supabaseDb = {
           body: JSON.stringify(data),
         });
 
-        const json = await res.json();
-        if (res.ok && json.success && json.order) {
+        if (ok && json?.success && json.order) {
           notifyOrderUpdated();
           return json.order as Order;
-        } else if (json.error) {
+        } else if (json?.error) {
           throw new Error(json.error);
         }
       }
@@ -1561,6 +1556,46 @@ const supabaseDb = {
     // Get original order for merchant
     const order = await this.getOrderById(companyId, data.order_id);
     const merchantId = data.merchant_id || order?.merchant_id || '';
+
+    // If active session token exists, call secure backend API first
+    if (typeof window !== 'undefined' && supabase) {
+      try {
+        const { data: sessData } = await supabase.auth.getSession();
+        const token = sessData?.session?.access_token;
+        if (token) {
+          const { ok, data: json, error: apiErr } = await safeFetchJson<any>('/api/admin/create-return', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              order_id: data.order_id,
+              courier_id: data.courier_id,
+              return_type: 'full_return',
+              return_shipping_cost: data.return_shipping_cost,
+              other_cost: data.other_cost,
+              total_return_amount: data.total_return_amount,
+              return_reason: data.return_reason,
+              other_reason: data.other_reason,
+              notes: data.notes,
+              status: data.status || 'created',
+            }),
+          });
+
+          if (ok && json?.success && json.return) {
+            notifyOrderUpdated(data.order_id);
+            return json.return as ReturnRecord;
+          } else if (json?.error || apiErr) {
+            throw new Error(json?.error || apiErr || 'فشل إنشاء طلب الإرجاع');
+          }
+        }
+      } catch (err: any) {
+        if (err.message && (err.message.includes('غير مصرح') || err.message.includes('صلاحية') || err.message.includes('403'))) {
+          throw err;
+        }
+      }
+    }
 
     const newReturn = {
       company_id: companyId,

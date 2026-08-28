@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
 import { PlatformAdmin, PlatformRole } from '../../types';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SuperAdminStaffPageProps {
   onNavigate: (path: string) => void;
@@ -43,14 +44,11 @@ export const SuperAdminStaffPage: React.FC<SuperAdminStaffPageProps> = ({ onNavi
   const fetchStaff = async (isManual = false) => {
     if (isManual) setRefreshing(true);
     try {
-      const res = await fetch('/api/super-admin/staff', {
+      const { ok, data } = await safeFetchJson<any>('/api/super-admin/staff', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setStaff(data.staff || []);
-        }
+      if (ok && data?.success) {
+        setStaff(data.staff || []);
       }
     } catch (err) {
       console.error('Failed to load staff:', err);
@@ -109,7 +107,7 @@ export const SuperAdminStaffPage: React.FC<SuperAdminStaffPageProps> = ({ onNavi
       const url = editingStaff ? `/api/super-admin/staff/${editingStaff.id}` : '/api/super-admin/staff';
       const method = editingStaff ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const { ok, data, error } = await safeFetchJson<any>(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -118,12 +116,11 @@ export const SuperAdminStaffPage: React.FC<SuperAdminStaffPageProps> = ({ onNavi
         body: JSON.stringify(form),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (ok && data?.success) {
         setIsModalOpen(false);
         await fetchStaff();
       } else {
-        setFormError(data.error || 'فشل حفظ بيانات الموظف');
+        setFormError(data?.error || error || 'فشل حفظ بيانات الموظف');
       }
     } catch (err: any) {
       setFormError(err.message || 'حدث خطأ في الخادم');
@@ -136,15 +133,14 @@ export const SuperAdminStaffPage: React.FC<SuperAdminStaffPageProps> = ({ onNavi
     if (!window.confirm(`هل أنت متأكد من رغبتك في حذف حساب (${name})؟`)) return;
 
     try {
-      const res = await fetch(`/api/super-admin/staff/${id}`, {
+      const { ok, data, error } = await safeFetchJson<any>(`/api/super-admin/staff/${id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (ok && data?.success) {
         await fetchStaff();
       } else {
-        alert(data.error || 'فشل حذف الحساب');
+        alert(data?.error || error || 'فشل حذف الحساب');
       }
     } catch (err) {
       alert('حدث خطأ في الخادم');

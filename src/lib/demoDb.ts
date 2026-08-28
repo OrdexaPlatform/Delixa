@@ -402,7 +402,15 @@ export function getInitialDemoData(): DemoStore {
 }
 
 class DemoDatabase {
+  private memoryStore: DemoStore | null = null;
+
   private getStore(): DemoStore {
+    if (typeof localStorage === 'undefined') {
+      if (!this.memoryStore) {
+        this.memoryStore = getInitialDemoData();
+      }
+      return this.memoryStore;
+    }
     try {
       const raw = localStorage.getItem(DEMO_STORAGE_KEY);
       if (raw) {
@@ -417,6 +425,10 @@ class DemoDatabase {
   }
 
   private saveStore(store: DemoStore): void {
+    if (typeof localStorage === 'undefined') {
+      this.memoryStore = store;
+      return;
+    }
     try {
       localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(store));
     } catch (e) {
@@ -889,8 +901,9 @@ class DemoDatabase {
   }
 
   // Events
-  async getOrderEvents(orderId: string): Promise<OrderEvent[]> {
-    return this.getStore().orderEvents.filter(e => e.order_id === orderId).sort((a, b) => new Date(b.timestamp || b.created_at || '').getTime() - new Date(a.timestamp || a.created_at || '').getTime());
+  async getOrderEvents(companyIdOrOrderId: string, maybeOrderId?: string): Promise<OrderEvent[]> {
+    const targetOrderId = maybeOrderId || companyIdOrOrderId;
+    return this.getStore().orderEvents.filter(e => e.order_id === targetOrderId).sort((a, b) => new Date(b.timestamp || b.created_at || '').getTime() - new Date(a.timestamp || a.created_at || '').getTime());
   }
 
   async getAllOrderEvents(companyId: string, options?: { limit?: number; actor?: string; eventType?: string; startDate?: string; endDate?: string; search?: string }): Promise<OrderEvent[]> {

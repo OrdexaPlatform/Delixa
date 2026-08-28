@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
 import { CompanyWithPlatformMetrics } from '../../types';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SuperAdminCompaniesPageProps {
   onNavigate: (path: string) => void;
@@ -42,14 +43,11 @@ export const SuperAdminCompaniesPage: React.FC<SuperAdminCompaniesPageProps> = (
   const fetchCompanies = async (isManual = false) => {
     if (isManual) setRefreshing(true);
     try {
-      const res = await fetch('/api/super-admin/companies', {
+      const { ok, data } = await safeFetchJson<any>('/api/super-admin/companies', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setCompanies(data.companies || []);
-        }
+      if (ok && data?.success) {
+        setCompanies(data.companies || []);
       }
     } catch (err) {
       console.error('Failed to fetch companies:', err);
@@ -86,7 +84,7 @@ export const SuperAdminCompaniesPage: React.FC<SuperAdminCompaniesPageProps> = (
 
     const targetStatus = actionType === 'suspend' ? 'suspended' : 'active';
     try {
-      const res = await fetch(`/api/super-admin/companies/${selectedCompany.id}/status`, {
+      const { ok, data, error } = await safeFetchJson<any>(`/api/super-admin/companies/${selectedCompany.id}/status`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -98,14 +96,13 @@ export const SuperAdminCompaniesPage: React.FC<SuperAdminCompaniesPageProps> = (
         }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (ok && data?.success) {
         setActionType(null);
         setSelectedCompany(null);
         setActionReason('');
         await fetchCompanies();
       } else {
-        setActionError(data.error || 'فشل تحديث حالة الشركة');
+        setActionError(data?.error || error || 'فشل تحديث حالة الشركة');
       }
     } catch (err: any) {
       setActionError(err.message || 'حدث خطأ في الخادم');
@@ -120,7 +117,7 @@ export const SuperAdminCompaniesPage: React.FC<SuperAdminCompaniesPageProps> = (
     setActionError(null);
 
     try {
-      const res = await fetch(`/api/super-admin/companies/${selectedCompany.id}/subscription`, {
+      const { ok, data, error } = await safeFetchJson<any>(`/api/super-admin/companies/${selectedCompany.id}/subscription`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -131,13 +128,12 @@ export const SuperAdminCompaniesPage: React.FC<SuperAdminCompaniesPageProps> = (
         }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (ok && data?.success) {
         setActionType(null);
         setSelectedCompany(null);
         await fetchCompanies();
       } else {
-        setActionError(data.error || 'فشل تمديد الاشتراك');
+        setActionError(data?.error || error || 'فشل تمديد الاشتراك');
       }
     } catch (err: any) {
       setActionError(err.message || 'حدث خطأ في الخادم');

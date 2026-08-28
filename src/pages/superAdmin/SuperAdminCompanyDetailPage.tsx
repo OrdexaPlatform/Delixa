@@ -19,6 +19,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SuperAdminCompanyDetailPageProps {
   companyId: string;
@@ -42,14 +43,11 @@ export const SuperAdminCompanyDetailPage: React.FC<SuperAdminCompanyDetailPagePr
 
   const fetchCompanyDetails = async () => {
     try {
-      const res = await fetch(`/api/super-admin/companies/${companyId}`, {
+      const { ok, data } = await safeFetchJson<any>(`/api/super-admin/companies/${companyId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setCompany(data.company);
-        }
+      if (ok && data?.success) {
+        setCompany(data.company);
       }
     } catch (err) {
       console.error('Failed to load company details:', err);
@@ -68,7 +66,7 @@ export const SuperAdminCompanyDetailPage: React.FC<SuperAdminCompanyDetailPagePr
     setActionSuccess(null);
 
     try {
-      const res = await fetch(`/api/super-admin/companies/${companyId}/status`, {
+      const { ok, data, error } = await safeFetchJson<any>(`/api/super-admin/companies/${companyId}/status`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -80,12 +78,11 @@ export const SuperAdminCompanyDetailPage: React.FC<SuperAdminCompanyDetailPagePr
         }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (ok && data?.success) {
         setActionSuccess(`تم ${targetStatus === 'active' ? 'تفعيل' : 'إيقاف'} الشركة بنجاح`);
         await fetchCompanyDetails();
       } else {
-        setActionError(data.error || 'فشل تنفيذ الإجراء');
+        setActionError(data?.error || error || 'فشل تنفيذ الإجراء');
       }
     } catch (err: any) {
       setActionError(err.message || 'حدث خطأ في الخادم');
@@ -100,7 +97,7 @@ export const SuperAdminCompanyDetailPage: React.FC<SuperAdminCompanyDetailPagePr
     setActionSuccess(null);
 
     try {
-      const res = await fetch(`/api/super-admin/companies/${companyId}/subscription`, {
+      const { ok, data, error } = await safeFetchJson<any>(`/api/super-admin/companies/${companyId}/subscription`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -111,12 +108,11 @@ export const SuperAdminCompanyDetailPage: React.FC<SuperAdminCompanyDetailPagePr
         }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (ok && data?.success) {
         setActionSuccess(`تم تمديد الاشتراك بنجاح (+${days} يوم)`);
         await fetchCompanyDetails();
       } else {
-        setActionError(data.error || 'فشل تمديد الاشتراك');
+        setActionError(data?.error || error || 'فشل تمديد الاشتراك');
       }
     } catch (err: any) {
       setActionError(err.message || 'حدث خطأ في الخادم');

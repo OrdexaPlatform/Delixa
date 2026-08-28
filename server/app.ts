@@ -1071,6 +1071,189 @@ export function createExpressApp(): express.Express {
     }
   });
 
+  // 4c. Admin Create Return Endpoint (Strictly forbidden for couriers -> returns 403)
+  app.post('/api/admin/create-return', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+
+      if (!token || !supabaseUrl || !supabaseAnonKey) {
+        return res.status(401).json({
+          success: false,
+          error: 'غير مصرح: يرجى تسجيل الدخول واستخدام رمز مصادقة صالح',
+        });
+      }
+
+      const callerClient = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: userData, error: userError } = await callerClient.auth.getUser(token);
+
+      if (userError || !userData?.user) {
+        return res.status(401).json({
+          success: false,
+          error: 'جلسة تسجيل الدخول منتهية أو غير صالحة',
+        });
+      }
+
+      const dbClient = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      const { data: profile, error: profError } = await dbClient
+        .from('profiles')
+        .select('*')
+        .eq('auth_user_id', userData.user.id)
+        .maybeSingle();
+
+      if (profError || !profile) {
+        return res.status(401).json({
+          success: false,
+          error: 'لم يتم العثور على الملف الشخصي للمستخدم',
+        });
+      }
+
+      // CRITICAL: Couriers are strictly forbidden from creating returns -> 403
+      if (profile.role !== 'admin') {
+        return res.status(403).json({
+          success: false,
+          code: 'FORBIDDEN',
+          error: 'غير مصرح: إنشاء المرتجعات متاح فقط لمديري النظام (Admin). لا يملك المندوب صلاحية إنشاء مرتجع.',
+        });
+      }
+
+      const companyId = profile.company_id;
+
+      const { data: companyRecord } = await dbClient
+        .from('companies')
+        .select('id, name, status')
+        .eq('id', companyId)
+        .maybeSingle();
+
+      if (companyRecord && (companyRecord.status === 'suspended' || companyRecord.status === 'disabled')) {
+        return res.status(403).json({
+          success: false,
+          error: 'حساب شركتك موقوف حاليًا. يرجى التواصل مع إدارة DELIXA.',
+        });
+      }
+
+      const body = req.body || {};
+      const {
+        order_id,
+        courier_id,
+        return_type,
+        return_shipping_cost,
+        other_cost,
+        total_return_amount,
+        return_reason,
+        other_reason,
+        notes,
+        status,
+      } = body;
+
+      if (!order_id || !return_reason) {
+        return res.status(400).json({
+          success: false,
+          error: 'يرجى تحديد الشحنة وسبب الإرجاع',
+        });
+      }
+
+      // Verify order belongs to this company
+      const { data: order, error: orderFetchErr } = await dbClient
+        .from('orders')
+        .select('*')
+        .eq('id', order_id)
+        .eq('company_id', companyId)
+        .maybeSingle();
+
+      if (orderFetchErr || !order) {
+        return res.status(404).json({
+          success: false,
+          error: 'الشحنة غير موجودة أو غير تابعة لهذه الشركة',
+        });
+      }
+
+      // Generate return number
+      const returnNumber = `RET-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
+
+      const newReturnRecord = {
+        company_id: companyId,
+        return_number: returnNumber,
+        order_id: order.id,
+        merchant_id: order.merchant_id,
+        courier_id: courier_id || order.courier_id || null,
+        return_type: return_type || 'full_return',
+        return_shipping_cost: Number(return_shipping_cost) || 0,
+        other_cost: Number(other_cost) || 0,
+        total_return_amount: Number(total_return_amount) || 0,
+        return_reason,
+        other_reason: other_reason?.trim() || null,
+        notes: notes?.trim() || null,
+        status: status || 'created',
+        created_by: profile.full_name || 'مدير النظام',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data: createdReturn, error: returnInsertErr } = await dbClient
+        .from('returns')
+        .insert([newReturnRecord])
+        .select('*')
+        .single();
+
+      if (returnInsertErr) {
+        console.error('API create-return insert error:', returnInsertErr);
+        return res.status(400).json({ success: false, error: returnInsertErr.message });
+      }
+
+      // If merchant debit applies
+      if (order.merchant_id && Number(return_shipping_cost) > 0) {
+        try {
+          await dbClient.from('merchant_transactions').insert([{
+            company_id: companyId,
+            merchant_id: order.merchant_id,
+            transaction_type: 'RETURN_COST',
+            direction: 'debit',
+            amount: Number(return_shipping_cost),
+            reference_type: 'return',
+            reference_id: createdReturn.id,
+            return_id: createdReturn.id,
+            return_number: createdReturn.return_number,
+            description: `تكلفة شحن مرتجع رقم ${createdReturn.return_number}`,
+            created_by: profile.full_name || 'مدير النظام',
+            created_at: new Date().toISOString(),
+          }]);
+        } catch (mErr: any) {
+          console.warn('Merchant transaction debit warning:', mErr?.message || mErr);
+        }
+      }
+
+      try {
+        await dbClient.from('order_events').insert([{
+          company_id: companyId,
+          order_id: order.id,
+          return_id: createdReturn.id,
+          event_type: 'return_created',
+          actor: 'admin',
+          actor_name: profile.full_name || 'مدير النظام',
+          details: `تم إنشاء طلب إرجاع رقم ${createdReturn.return_number} (السبب: ${return_reason})`,
+          created_at: new Date().toISOString(),
+        }]);
+      } catch (_) {}
+
+      return res.json({
+        success: true,
+        return: createdReturn,
+      });
+    } catch (err: any) {
+      console.error('API create-return exception:', err);
+      return res.status(500).json({
+        success: false,
+        error: err.message || 'حدث خطأ داخلي أثناء إنشاء المرتجع',
+      });
+    }
+  });
+
   // 5. Company Status Verification Endpoint
   app.get('/api/company/verify-status', async (req, res) => {
     try {

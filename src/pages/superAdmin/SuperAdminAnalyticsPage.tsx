@@ -25,6 +25,7 @@ import {
   Cell
 } from 'recharts';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SuperAdminAnalyticsPageProps {
   onNavigate: (path: string) => void;
@@ -40,14 +41,11 @@ export const SuperAdminAnalyticsPage: React.FC<SuperAdminAnalyticsPageProps> = (
   const fetchAnalytics = async (isManual = false) => {
     if (isManual) setRefreshing(true);
     try {
-      const res = await fetch(`/api/super-admin/analytics?days=${days}`, {
+      const { ok, data: json } = await safeFetchJson<any>(`/api/super-admin/analytics?days=${days}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success) {
-          setData(json);
-        }
+      if (ok && json?.success) {
+        setData(json);
       }
     } catch (err) {
       console.error('Failed to load analytics:', err);

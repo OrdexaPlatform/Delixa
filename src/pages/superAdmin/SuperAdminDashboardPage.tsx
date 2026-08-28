@@ -29,6 +29,7 @@ import {
   Cell
 } from 'recharts';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SuperAdminDashboardPageProps {
   onNavigate: (path: string) => void;
@@ -47,27 +48,21 @@ export const SuperAdminDashboardPage: React.FC<SuperAdminDashboardPageProps> = (
     if (isManual) setRefreshing(true);
     try {
       const [statsRes, logsRes] = await Promise.all([
-        fetch('/api/super-admin/dashboard/stats', {
+        safeFetchJson<any>('/api/super-admin/dashboard/stats', {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch('/api/super-admin/activity-logs?limit=8', {
+        safeFetchJson<any>('/api/super-admin/activity-logs?limit=8', {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ]);
 
-      if (statsRes.ok) {
-        const data = await statsRes.json();
-        if (data.success) {
-          setStats(data.stats);
-          setCharts(data.charts);
-        }
+      if (statsRes.ok && statsRes.data?.success) {
+        setStats(statsRes.data.stats);
+        setCharts(statsRes.data.charts);
       }
 
-      if (logsRes.ok) {
-        const logsData = await logsRes.json();
-        if (logsData.success) {
-          setRecentLogs(logsData.logs || []);
-        }
+      if (logsRes.ok && logsRes.data?.success) {
+        setRecentLogs(logsRes.data.logs || []);
       }
     } catch (err) {
       console.error('Failed to load dashboard:', err);

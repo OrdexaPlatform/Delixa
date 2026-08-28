@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
 import { PlatformPayment } from '../../types';
+import { safeFetchJson } from '../../utils/apiClient';
 
 interface SuperAdminPaymentsPageProps {
   onNavigate: (path: string) => void;
@@ -48,25 +49,19 @@ export const SuperAdminPaymentsPage: React.FC<SuperAdminPaymentsPageProps> = ({ 
     if (isManual) setRefreshing(true);
     try {
       const [payRes, compRes] = await Promise.all([
-        fetch('/api/super-admin/payments', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch('/api/super-admin/companies', { headers: { Authorization: `Bearer ${token}` } }),
+        safeFetchJson<any>('/api/super-admin/payments', { headers: { Authorization: `Bearer ${token}` } }),
+        safeFetchJson<any>('/api/super-admin/companies', { headers: { Authorization: `Bearer ${token}` } }),
       ]);
 
-      if (payRes.ok) {
-        const data = await payRes.json();
-        if (data.success) {
-          setPayments(data.payments || []);
-          setSummary(data.summary || null);
-        }
+      if (payRes.ok && payRes.data?.success) {
+        setPayments(payRes.data.payments || []);
+        setSummary(payRes.data.summary || null);
       }
 
-      if (compRes.ok) {
-        const compData = await compRes.json();
-        if (compData.success) {
-          setCompanies(compData.companies || []);
-          if (compData.companies?.length > 0 && !form.company_id) {
-            setForm(f => ({ ...f, company_id: compData.companies[0].id }));
-          }
+      if (compRes.ok && compRes.data?.success) {
+        setCompanies(compRes.data.companies || []);
+        if (compRes.data.companies?.length > 0 && !form.company_id) {
+          setForm(f => ({ ...f, company_id: compRes.data.companies[0].id }));
         }
       }
     } catch (err) {
@@ -101,7 +96,7 @@ export const SuperAdminPaymentsPage: React.FC<SuperAdminPaymentsPageProps> = ({ 
     setFormError(null);
 
     try {
-      const res = await fetch('/api/super-admin/payments', {
+      const { ok, data, error } = await safeFetchJson<any>('/api/super-admin/payments', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -110,12 +105,11 @@ export const SuperAdminPaymentsPage: React.FC<SuperAdminPaymentsPageProps> = ({ 
         body: JSON.stringify(form),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (ok && data?.success) {
         setIsModalOpen(false);
         await fetchPayments();
       } else {
-        setFormError(data.error || 'فشل تسجيل الدفعة');
+        setFormError(data?.error || error || 'فشل تسجيل الدفعة');
       }
     } catch (err: any) {
       setFormError(err.message || 'حدث خطأ في الخادم');

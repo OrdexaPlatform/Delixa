@@ -349,7 +349,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   // 2. SUPER ADMIN AUTHENTICATION
   // ============================================================================
 
-  router.post('/api/super-admin/auth/login', async (req, res) => {
+  const handleSuperAdminLogin = async (req: Request, res: Response) => {
     try {
       const { username, password } = req.body || {};
       if (!username || !password) {
@@ -451,35 +451,29 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
         expires_at: expiresAt,
       });
 
-      // Store in DB if available
+      // Record in Database platform_sessions
       if (supabase) {
         try {
-          await supabase.from('platform_sessions').insert([
-            {
-              admin_id: matchedAdmin.id,
-              token,
-              ip_address: ip.slice(0, 100),
-              user_agent: userAgent.slice(0, 255),
-              expires_at: expiresAt.toISOString(),
-            }
-          ]);
-
-          await supabase
-            .from('platform_admins')
-            .update({ last_login_at: new Date().toISOString() })
-            .eq('id', matchedAdmin.id);
-        } catch {
-          // safe
+          await supabase.from('platform_sessions').insert([{
+            admin_id: matchedAdmin.id,
+            token,
+            expires_at: expiresAt.toISOString(),
+            ip_address: ip.slice(0, 100),
+            user_agent: userAgent.slice(0, 255),
+            created_at: new Date().toISOString(),
+          }]);
+        } catch (dbErr) {
+          console.error('[DELIXA DB] Failed to save platform_session:', dbErr);
         }
       }
 
-      // Record Activity
+      // Log login activity
       logActivity(
-        matchedAdmin.full_name,
-        'super_admin_login',
+        matchedAdmin.full_name || matchedAdmin.username,
+        'login',
         'auth',
         matchedAdmin.id,
-        `تسجيل دخول ناجح للمسؤول ${matchedAdmin.full_name}`,
+        `تسجيل دخول ناجح للمسؤول ${matchedAdmin.full_name || matchedAdmin.username}`,
         { ip, userAgent: userAgent.slice(0, 100) },
         matchedAdmin.id
       );
@@ -489,20 +483,26 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
 
       return res.json({
         success: true,
+        token,
+        admin: safeAdmin,
         session: {
           token,
           admin: safeAdmin,
           expires_at: expiresAt.toISOString(),
         },
+        expiresAt: expiresAt.toISOString(),
       });
     } catch (err: any) {
-      console.error('Super Admin login exception:', err);
+      console.error('Super Admin Login Exception:', err);
       return res.status(500).json({
         success: false,
-        error: 'حدث خطأ في الخادم أثناء تسجيل الدخول',
+        error: 'حدث خطأ داخلي في خادم Super Admin أثناء تسجيل الدخول',
       });
     }
-  });
+  };
+
+  router.post('/api/super-admin/auth/login', handleSuperAdminLogin);
+  router.post('/api/super-admin/login', handleSuperAdminLogin);
 
   // Get current logged-in Super Admin details
   router.get('/api/super-admin/auth/me', requireSuperAdmin, (req, res) => {
@@ -552,7 +552,7 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
   // 3. DASHBOARD METRICS & RECHARTS DATA
   // ============================================================================
 
-  router.get('/api/super-admin/dashboard/stats', requireSuperAdmin, requirePermission('dashboard.view'), async (_req, res) => {
+  const getDashboardStatsHandler = async (_req: Request, res: Response) => {
     try {
       const supabase = getDbClient();
       let companies: any[] = [];
@@ -718,7 +718,10 @@ export function setupSuperAdminRoutes(router: Router, getDbClient: () => Supabas
       console.error('Super Admin Dashboard stats error:', err);
       return res.status(500).json({ success: false, error: err.message });
     }
-  });
+  };
+
+  router.get('/api/super-admin/dashboard/stats', requireSuperAdmin, requirePermission('dashboard.view'), getDashboardStatsHandler);
+  router.get('/api/super-admin/overview', requireSuperAdmin, requirePermission('dashboard.view'), getDashboardStatsHandler);
 
   // ============================================================================
   // 4. COMPANIES DIRECTORY & MANAGEMENT
