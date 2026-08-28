@@ -2201,7 +2201,7 @@ const supabaseDb = {
       this.getCouriers(companyId),
       this.getMerchants(companyId),
       this.getOutstandingCollectionsTotal(companyId),
-      this.getOrderEvents(companyId, { limit: 15 }),
+      this.getAllOrderEvents(companyId, { limit: 15 }),
     ]);
 
     const totalOrders = orders.length;

@@ -42,7 +42,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ navigate
         role: isAdmin ? 'admin' : 'courier',
         courierId: courierId,
       });
-      setNotifications(items);
+      setNotifications(Array.isArray(items) ? items : []);
     } catch (err) {
       console.error('Error loading notifications:', err);
     }

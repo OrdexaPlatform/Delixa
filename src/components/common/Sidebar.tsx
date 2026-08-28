@@ -154,14 +154,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span>{isAdmin ? t.roleAdmin : t.roleCourier}</span>
           </span>
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono">
-            {session.company.id.substring(0, 6)}
+            {(session?.company?.id || '').substring(0, 6)}
           </span>
         </div>
         <p className="font-extrabold text-white text-sm mt-1.5 truncate">
-          {session.company.name}
+          {session?.company?.name || 'الشركة'}
         </p>
         <p className="text-xs text-slate-400 truncate mt-0.5">
-          {session.profile.full_name}
+          {session?.profile?.full_name || ''}
         </p>
       </div>
 

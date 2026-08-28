@@ -48,21 +48,33 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
   const [merchantsList, setMerchantsList] = useState<Merchant[]>([]);
 
   const loadData = async () => {
-    if (!session) return;
+    if (!session?.company?.id) return;
     const companyId = session.company.id;
 
-    // Fetch real metrics from DB
-    const [dbMetrics, orders, couriers, merchants] = await Promise.all([
-      db.getAdminMetrics(companyId),
-      db.getOrders(companyId),
-      db.getCouriers(companyId),
-      db.getMerchants(companyId),
-    ]);
+    try {
+      // Fetch real metrics from DB
+      const [dbMetrics, orders, couriers, merchants] = await Promise.all([
+        db.getAdminMetrics(companyId),
+        db.getOrders(companyId),
+        db.getCouriers(companyId),
+        db.getMerchants(companyId),
+      ]);
 
-    setMetrics(dbMetrics);
-    setRecentOrders(orders.slice(0, 6));
-    setCouriersList(couriers);
-    setMerchantsList(merchants);
+      if (dbMetrics) {
+        setMetrics(dbMetrics);
+      }
+      if (Array.isArray(orders)) {
+        setRecentOrders(orders.slice(0, 6));
+      }
+      if (Array.isArray(couriers)) {
+        setCouriersList(couriers);
+      }
+      if (Array.isArray(merchants)) {
+        setMerchantsList(merchants);
+      }
+    } catch (err) {
+      console.error('Error loading admin dashboard metrics:', err);
+    }
   };
 
   useEffect(() => {
@@ -331,7 +343,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
 
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold px-3 py-1 bg-blue-50 text-blue-800 rounded-lg border border-blue-200">
-              مجدولة اليوم: {metrics.todayOverview.totalScheduledToday} شحنة
+              مجدولة اليوم: {metrics.todayOverview?.totalScheduledToday ?? 0} شحنة
             </span>
             <button
               onClick={() => navigate('/orders')}
@@ -349,7 +361,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col">
             <span className="text-[11px] font-semibold text-slate-500">إجمالي شحنات اليوم</span>
             <span className="text-2xl font-black text-slate-900 mt-1">
-              {metrics.todayOverview.totalScheduledToday}
+              {metrics.todayOverview?.totalScheduledToday ?? 0}
             </span>
             <span className="text-[10px] text-slate-400 mt-1">مدرجة في جدول اليوم</span>
           </div>
@@ -357,7 +369,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
           <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 flex flex-col">
             <span className="text-[11px] font-semibold text-blue-700">مع المناديب الآن</span>
             <span className="text-2xl font-black text-blue-800 mt-1">
-              {metrics.todayOverview.outForDeliveryToday}
+              {metrics.todayOverview?.outForDeliveryToday ?? 0}
             </span>
             <span className="text-[10px] text-blue-600 mt-1">قيد التوصيل في الطريق</span>
           </div>
@@ -365,17 +377,17 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
           <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200 flex flex-col">
             <span className="text-[11px] font-semibold text-emerald-700">مسلّمة اليوم</span>
             <span className="text-2xl font-black text-emerald-800 mt-1">
-              {metrics.todayOverview.deliveredToday}
+              {metrics.todayOverview?.deliveredToday ?? 0}
             </span>
             <span className="text-[10px] text-emerald-600 mt-1">
-              نسبة الإنجاز: {metrics.todayOverview.successRateToday}%
+              نسبة الإنجاز: {metrics.todayOverview?.successRateToday ?? 100}%
             </span>
           </div>
 
           <div className="p-3.5 rounded-xl bg-rose-50/70 border border-rose-200 flex flex-col">
             <span className="text-[11px] font-semibold text-rose-700">تعثر تسليمها اليوم</span>
             <span className="text-2xl font-black text-rose-800 mt-1">
-              {metrics.todayOverview.failedToday}
+              {metrics.todayOverview?.failedToday ?? 0}
             </span>
             <span className="text-[10px] text-rose-600 mt-1">تحتاج متابعة وتوجيه</span>
           </div>
@@ -383,7 +395,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
           <div className="p-3.5 rounded-xl bg-teal-50/70 border border-teal-200 flex flex-col">
             <span className="text-[11px] font-semibold text-teal-700">أكدها العميل اليوم</span>
             <span className="text-2xl font-black text-teal-800 mt-1">
-              {metrics.todayOverview.confirmedToday}
+              {metrics.todayOverview?.confirmedToday ?? 0}
             </span>
             <span className="text-[10px] text-teal-600 mt-1">جاهزة ومؤكدة للاستلام</span>
           </div>
@@ -391,7 +403,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
           <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 flex flex-col">
             <span className="text-[11px] font-semibold text-amber-700">تأجيل مطلوب من العميل</span>
             <span className="text-2xl font-black text-amber-800 mt-1">
-              {metrics.todayOverview.rescheduledToday}
+              {metrics.todayOverview?.rescheduledToday ?? 0}
             </span>
             <span className="text-[10px] text-amber-600 mt-1">طلبوا موعداً لاحقاً</span>
           </div>
@@ -423,7 +435,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
             </button>
           </div>
 
-          {metrics.courierPerformance.length === 0 ? (
+          {(metrics.courierPerformance || []).length === 0 ? (
             <div className="text-center py-10 border border-dashed border-slate-200 rounded-xl bg-slate-50">
               <Users className="w-8 h-8 text-slate-300 mx-auto mb-2" />
               <p className="text-xs text-slate-500 font-semibold">{t.noCouriersFound}</p>
@@ -679,12 +691,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ navigate
           </div>
 
           <div className="flex-1 space-y-3 overflow-y-auto max-h-[380px]">
-            {metrics.recentActivity.length === 0 ? (
+            {(metrics.recentActivity || []).length === 0 ? (
               <div className="text-center py-8 text-xs text-slate-400">
                 لا توجد نشاطات مسجلة حتى الآن
               </div>
             ) : (
-              metrics.recentActivity.map(event => (
+              (metrics.recentActivity || []).map(event => (
                 <div
                   key={event.id}
                   className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs text-start space-y-1"
