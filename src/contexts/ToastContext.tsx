@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useState } from 'react';
 import { ToastMessage } from '../types';
 import { CheckCircle2, AlertCircle, Info, AlertTriangle, X } from 'lucide-react';
+import { getErrorMessage } from '../utils/errorHandler';
 
 interface ToastContextType {
-  showToast: (type: 'success' | 'error' | 'info' | 'warning', title: string, message?: string) => void;
+  showToast: (type: 'success' | 'error' | 'info' | 'warning', title: any, message?: any) => void;
 }
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
@@ -11,14 +12,24 @@ const ToastContext = createContext<ToastContextType | undefined>(undefined);
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  const showToast = (type: 'success' | 'error' | 'info' | 'warning', title: string, message?: string) => {
+  const showToast = (type: 'success' | 'error' | 'info' | 'warning', title: any, message?: any) => {
     const id = Math.random().toString(36).substring(2, 9);
-    const newToast: ToastMessage = { id, type, title, message };
+    
+    // Sanitize title and message using unified errorHandler to prevent [object Object]
+    const cleanTitle = typeof title === 'string' ? title : getErrorMessage(title, 'تنبيه من النظام');
+    const cleanMessage = message !== undefined && message !== null ? (typeof message === 'string' ? message : getErrorMessage(message, '')) : undefined;
+
+    const newToast: ToastMessage = { 
+      id, 
+      type, 
+      title: cleanTitle, 
+      message: cleanMessage && cleanMessage !== cleanTitle ? cleanMessage : undefined 
+    };
     setToasts(prev => [...prev, newToast]);
 
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
-    }, 4000);
+    }, 4500);
   };
 
   const removeToast = (id: string) => {

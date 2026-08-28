@@ -71,7 +71,11 @@ const EGYPT_GOVERNORATES = [
   'الوادي الجديد (New Valley)'
 ];
 
-export const OrdersFoundationPage: React.FC = () => {
+interface OrdersFoundationPageProps {
+  initialOrderId?: string;
+}
+
+export const OrdersFoundationPage: React.FC<OrdersFoundationPageProps> = ({ initialOrderId }) => {
   const { session } = useAuth();
   const { t, isRTL } = useLanguage();
   const { showToast } = useToast();
@@ -150,6 +154,13 @@ export const OrdersFoundationPage: React.FC = () => {
     setReturnsMap(rMap);
     if (pricing) {
       setShippingPricing(pricing);
+    }
+
+    if (initialOrderId && ords.length > 0) {
+      const match = ords.find(o => o.id === initialOrderId || o.order_number === initialOrderId);
+      if (match) {
+        handleOpenDetails(match);
+      }
     }
   };
 

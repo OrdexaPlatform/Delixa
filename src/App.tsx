@@ -238,27 +238,39 @@ const AppRouter: React.FC = () => {
         {/* Dynamic Main Workspace Content */}
         <main className="flex-1 min-w-0 pb-16 md:pb-6">
           {/* Admin Routes with Strict AdminRouteGuard */}
-          {(currentPath === '/dashboard' || currentPath === '/admin/dashboard') && (
+          {(currentPath === '/dashboard' || currentPath === '/admin/dashboard' || currentPath === '/admin') && (
             <AdminRouteGuard navigate={navigate}>
               <AdminDashboardPage navigate={navigate} />
             </AdminRouteGuard>
           )}
 
-          {currentPath === '/merchants' && (
+          {(currentPath === '/merchants' || currentPath === '/admin/merchants') && (
             <AdminRouteGuard navigate={navigate}>
               <MerchantsPage />
             </AdminRouteGuard>
           )}
 
-          {currentPath === '/couriers' && (
+          {(currentPath === '/couriers' || currentPath === '/admin/couriers') && (
             <AdminRouteGuard navigate={navigate}>
               <CouriersPage />
             </AdminRouteGuard>
           )}
 
-          {currentPath === '/orders' && (
+          {(currentPath === '/orders' || currentPath === '/admin/orders') && (
             <AdminRouteGuard navigate={navigate}>
               <OrdersFoundationPage />
+            </AdminRouteGuard>
+          )}
+
+          {(currentPath.startsWith('/orders/') || currentPath.startsWith('/admin/orders/')) && (
+            <AdminRouteGuard navigate={navigate}>
+              <OrdersFoundationPage
+                initialOrderId={
+                  currentPath.startsWith('/admin/orders/')
+                    ? currentPath.replace('/admin/orders/', '').split('?')[0]
+                    : currentPath.replace('/orders/', '').split('?')[0]
+                }
+              />
             </AdminRouteGuard>
           )}
 
@@ -268,32 +280,32 @@ const AppRouter: React.FC = () => {
             </AdminRouteGuard>
           )}
 
-          {currentPath === '/returns' && (
+          {(currentPath === '/returns' || currentPath === '/admin/returns') && (
             <AdminRouteGuard navigate={navigate}>
               <ReturnsPage />
             </AdminRouteGuard>
           )}
 
-          {currentPath === '/reports' && (
+          {(currentPath === '/reports' || currentPath === '/admin/reports') && (
             <AdminRouteGuard navigate={navigate}>
               <ReportsPage />
             </AdminRouteGuard>
           )}
 
-          {currentPath === '/activity' && (
+          {(currentPath === '/activity' || currentPath === '/admin/activity') && (
             <AdminRouteGuard navigate={navigate}>
               <ActivityLogPage navigate={navigate} />
             </AdminRouteGuard>
           )}
 
-          {currentPath === '/settings' && (
+          {(currentPath === '/settings' || currentPath === '/admin/settings') && (
             <AdminRouteGuard navigate={navigate}>
               <SettingsPage />
             </AdminRouteGuard>
           )}
 
           {/* Courier Routes with Strict CourierRouteGuard */}
-          {currentPath === '/courier/dashboard' && (
+          {(currentPath === '/courier/dashboard' || currentPath === '/courier') && (
             <CourierRouteGuard navigate={navigate}>
               <CourierDashboardPage navigate={navigate} />
             </CourierRouteGuard>
@@ -319,6 +331,35 @@ const AppRouter: React.FC = () => {
               />
             </CourierRouteGuard>
           )}
+
+          {/* Fallback 404 Route for unrecognized internal paths */}
+          {![
+            '/dashboard', '/admin/dashboard', '/admin',
+            '/orders', '/admin/orders',
+            '/merchants', '/admin/merchants',
+            '/couriers', '/admin/couriers',
+            '/collections', '/admin/collections',
+            '/returns', '/admin/returns',
+            '/reports', '/admin/reports',
+            '/activity', '/admin/activity',
+            '/settings', '/admin/settings',
+            '/courier', '/courier/dashboard',
+            '/courier/orders', '/courier/returns'
+          ].includes(currentPath) &&
+            !currentPath.startsWith('/orders/') &&
+            !currentPath.startsWith('/admin/orders/') &&
+            !currentPath.startsWith('/courier/orders/') && (
+              <div className="min-h-[50vh] flex flex-col items-center justify-center text-center p-8 bg-white border border-slate-200 rounded-2xl">
+                <h2 className="text-xl font-bold text-slate-800 mb-2">الصفحة المطلوبة غير موجودة</h2>
+                <p className="text-sm text-slate-500 mb-6">لم يتم العثور على المسار: <code className="bg-slate-100 px-2 py-1 rounded text-blue-600">{currentPath}</code></p>
+                <button
+                  onClick={() => navigate(adminSession ? '/admin/dashboard' : courierSession ? '/courier/dashboard' : '/')}
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-sm"
+                >
+                  العودة إلى لوحة التحكم
+                </button>
+              </div>
+            )}
         </main>
       </div>
     </div>
