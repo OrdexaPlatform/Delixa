@@ -15,6 +15,7 @@ import {
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
 import { PlatformAdmin, PlatformRole } from '../../types';
 import { safeFetchJson } from '../../utils/apiClient';
+import { getErrorMessage } from '../../utils/errorHandler';
 
 interface SuperAdminStaffPageProps {
   onNavigate: (path: string) => void;
@@ -140,10 +141,10 @@ export const SuperAdminStaffPage: React.FC<SuperAdminStaffPageProps> = ({ onNavi
       if (ok && data?.success) {
         await fetchStaff();
       } else {
-        alert(data?.error || error || 'فشل حذف الحساب');
+        alert(getErrorMessage(data?.error || error, 'فشل حذف الحساب'));
       }
     } catch (err) {
-      alert('حدث خطأ في الخادم');
+      alert(getErrorMessage(err, 'حدث خطأ في الخادم'));
     }
   };
 

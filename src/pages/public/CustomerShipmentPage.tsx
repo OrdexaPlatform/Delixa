@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { DelixaLogo } from '../../components/common/DelixaLogo';
 import { safeFetchJson } from '../../utils/apiClient';
+import { getErrorMessage } from '../../utils/errorHandler';
 
 interface CustomerShipmentPageProps {
   token: string;
@@ -231,11 +232,11 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
           loadShipment();
           setSuccessNotice(isAr ? 'تم تأكيد موعد الاستلام بنجاح!' : 'Delivery confirmed successfully!');
         } else {
-          alert(data?.error || error || fbRes.error || (isAr ? 'حدث خطأ أثناء التأكيد' : 'Confirmation error'));
+          setErrorMessage(getErrorMessage(data?.error || error || fbRes.error, isAr ? 'حدث خطأ أثناء التأكيد' : 'Confirmation error'));
         }
       }
     } catch (e: any) {
-      alert(e.message || 'حدث خطأ غير متوقع');
+      setErrorMessage(getErrorMessage(e, isAr ? 'حدث خطأ غير متوقع' : 'Unexpected error'));
     } finally {
       setIsSubmitting(false);
     }
@@ -276,11 +277,11 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
           setActiveTab('details');
           setSuccessNotice(isAr ? 'تم تعديل الموعد بنجاح!' : 'Rescheduled successfully!');
         } else {
-          alert(data?.error || error || fbRes.error || 'حدث خطأ أثناء تعديل الموعد');
+          setErrorMessage(getErrorMessage(data?.error || error || fbRes.error, isAr ? 'حدث خطأ أثناء تعديل الموعد' : 'Reschedule error'));
         }
       }
     } catch (e: any) {
-      alert(e.message || 'حدث خطأ غير متوقع');
+      setErrorMessage(getErrorMessage(e, isAr ? 'حدث خطأ غير متوقع' : 'Unexpected error'));
     } finally {
       setIsSubmitting(false);
     }
@@ -315,11 +316,11 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
           setActiveTab('details');
           setSuccessNotice(isAr ? 'تم إلغاء الشحنة بنجاح.' : 'Cancelled successfully.');
         } else {
-          alert(data?.error || error || fbRes.error || 'حدث خطأ أثناء إلغاء الشحنة');
+          setErrorMessage(getErrorMessage(data?.error || error || fbRes.error, isAr ? 'حدث خطأ أثناء إلغاء الشحنة' : 'Cancellation error'));
         }
       }
     } catch (e: any) {
-      alert(e.message || 'حدث خطأ غير متوقع');
+      setErrorMessage(getErrorMessage(e, isAr ? 'حدث خطأ غير متوقع' : 'Unexpected error'));
     } finally {
       setIsSubmitting(false);
     }
