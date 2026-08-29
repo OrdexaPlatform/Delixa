@@ -4,6 +4,7 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import { db, DEFAULT_DELIVERY_SLOTS, DEFAULT_SHIPPING_PRICING, EGYPT_GOVERNORATES } from '../../lib/db';
 import { DeliverySlot, ShippingPricingSettings, PricingModel } from '../../types';
+import { getErrorMessage } from '../../utils/errorHandler';
 import { 
   Settings, 
   Building2, 
@@ -108,7 +109,7 @@ export const SettingsPage: React.FC = () => {
       await db.saveCompanyShippingPricing(session.company.id, shippingPricing);
       showToast('success', 'تم حفظ إعدادات تسعير الشحن بنجاح');
     } catch (err: any) {
-      showToast('error', 'تعذر حفظ إعدادات التسعير', err.message);
+      showToast('error', 'تعذر حفظ إعدادات التسعير', getErrorMessage(err));
     } finally {
       setSavingPricing(false);
     }
@@ -186,7 +187,7 @@ export const SettingsPage: React.FC = () => {
       setIsAddingSlot(false);
       showToast('success', 'تمت إضافة نافذة التوصيل بنجاح');
     } catch (err: any) {
-      showToast('error', 'تعذر إضافة النافذة', err.message);
+      showToast('error', 'تعذر إضافة النافذة', getErrorMessage(err));
     }
   };
 
@@ -260,7 +261,7 @@ export const SettingsPage: React.FC = () => {
 
       showToast('success', 'تم تحديث الملف الشخصي بنجاح');
     } catch (err: any) {
-      showToast('error', 'فشل التحديث', err.message);
+      showToast('error', 'فشل التحديث', getErrorMessage(err));
     } finally {
       setSavingAdmin(false);
     }
@@ -397,6 +398,86 @@ CREATE TABLE IF NOT EXISTS public.returns (
     CONSTRAINT uq_company_return_number UNIQUE (company_id, return_number)
 );
 
+-- 7. COURIER SETTLEMENTS & COLLECTIONS
+CREATE TABLE IF NOT EXISTS public.courier_settlements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id UUID NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
+    courier_id UUID NOT NULL REFERENCES public.couriers(id) ON DELETE RESTRICT,
+    settlement_number VARCHAR(100) NOT NULL,
+    total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    received_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    expected_amount NUMERIC(12, 2) DEFAULT 0.00,
+    remaining_amount NUMERIC(12, 2) DEFAULT 0.00,
+    orders_count INTEGER DEFAULT 0,
+    settled_by VARCHAR(255) NOT NULL,
+    settled_by_profile_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
+);
+
+-- Safety column migrations for courier_settlements:
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS received_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS expected_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS remaining_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS orders_count INTEGER DEFAULT 0;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS settled_by VARCHAR(255);
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS settled_by_profile_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+
+-- 8. MERCHANT SETTLEMENTS & TRANSACTIONS
+CREATE TABLE IF NOT EXISTS public.merchant_settlements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id UUID NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
+    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE RESTRICT,
+    settlement_number VARCHAR(100) NOT NULL,
+    type VARCHAR(50) DEFAULT 'payout_to_merchant',
+    settlement_type VARCHAR(50),
+    amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    net_paid_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    net_payout NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    expected_amount NUMERIC(12, 2) DEFAULT 0.00,
+    paid_amount NUMERIC(12, 2) DEFAULT 0.00,
+    remaining_amount NUMERIC(12, 2) DEFAULT 0.00,
+    total_cod NUMERIC(12, 2) DEFAULT 0.00,
+    total_shipping_fees NUMERIC(12, 2) DEFAULT 0.00,
+    deducted_shipping_fees NUMERIC(12, 2) DEFAULT 0.00,
+    total_return_costs NUMERIC(12, 2) DEFAULT 0.00,
+    orders_count INTEGER DEFAULT 0,
+    payment_method VARCHAR(50) DEFAULT 'cash',
+    settled_by VARCHAR(255) NOT NULL,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
+);
+
+-- Safety column migrations for merchant_settlements:
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS type VARCHAR(50) DEFAULT 'payout_to_merchant';
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS settlement_type VARCHAR(50);
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS net_paid_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS net_payout NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS expected_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS remaining_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS total_cod NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS total_shipping_fees NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS deducted_shipping_fees NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS total_return_costs NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS orders_count INTEGER DEFAULT 0;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT 'cash';
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS settled_by VARCHAR(255);
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS settled_by_profile_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+
+-- Reload PostgREST schema cache
+NOTIFY pgrst, 'reload schema';
+
 -- ENABLE ROW LEVEL SECURITY (RLS)
 ALTER TABLE public.companies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -404,6 +485,8 @@ ALTER TABLE public.couriers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.merchants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.returns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.courier_settlements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.merchant_settlements ENABLE ROW LEVEL SECURITY;
 
 -- Helper Security Definer function
 CREATE OR REPLACE FUNCTION public.get_auth_company_id()

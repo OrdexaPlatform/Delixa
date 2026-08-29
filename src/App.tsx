@@ -137,7 +137,7 @@ const AppRouter: React.FC = () => {
           {currentPath === '/super-admin/companies' && <SuperAdminCompaniesPage onNavigate={navigate} />}
           {currentPath.startsWith('/super-admin/companies/') && (
             <SuperAdminCompanyDetailPage
-              companyId={currentPath.replace('/super-admin/companies/', '').split('?')[0]}
+              companyId={currentPath.replace('/super-admin/companies/', '')?.split('?')[0]}
               onNavigate={navigate}
             />
           )}
@@ -186,7 +186,7 @@ const AppRouter: React.FC = () => {
     currentPath.startsWith('/confirm/') ||
     currentPath.startsWith('/track/')
   ) {
-    const token = currentPath.replace(/^\/(c|s|confirm|track)\//, '').split('?')[0];
+    const token = currentPath.replace(/^\/(c|s|confirm|track)\//, '')?.split('?')[0];
     return <CustomerShipmentPage token={token} navigate={navigate} />;
   }
   if (
@@ -267,8 +267,8 @@ const AppRouter: React.FC = () => {
               <OrdersFoundationPage
                 initialOrderId={
                   currentPath.startsWith('/admin/orders/')
-                    ? currentPath.replace('/admin/orders/', '').split('?')[0]
-                    : currentPath.replace('/orders/', '').split('?')[0]
+                    ? currentPath.replace('/admin/orders/', '')?.split('?')[0]
+                    : currentPath.replace('/orders/', '')?.split('?')[0]
                 }
               />
             </AdminRouteGuard>
@@ -326,7 +326,7 @@ const AppRouter: React.FC = () => {
           {currentPath.startsWith('/courier/orders/') && (
             <CourierRouteGuard navigate={navigate}>
               <CourierOrderDetailPage
-                orderId={currentPath.replace('/courier/orders/', '').split('?')[0]}
+                orderId={currentPath.replace('/courier/orders/', '')?.split('?')[0]}
                 navigate={navigate}
               />
             </CourierRouteGuard>

@@ -11,6 +11,7 @@ import {
 } from '../../types';
 import { Modal } from '../../components/common/Modal';
 import { CourierSettlementReceiptModal } from '../../components/collections/CourierSettlementReceiptModal';
+import { getErrorMessage } from '../../utils/errorHandler';
 import { 
   Banknote, 
   Coins, 
@@ -234,7 +235,7 @@ export const CollectionsPage: React.FC<CollectionsPageProps> = ({ navigate }) =>
         setIsReceiptModalOpen(true);
       }
     } catch (err: any) {
-      setSettlementError(err.message || 'حدث خطأ أثناء حفظ التسوية');
+      setSettlementError(getErrorMessage(err, 'حدث خطأ أثناء حفظ التسوية'));
     } finally {
       setIsSubmitting(false);
     }

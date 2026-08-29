@@ -6,6 +6,7 @@ import { db } from '../../lib/db';
 import { Merchant, MerchantStatus, Order, MerchantFinancialSummary } from '../../types';
 import { Modal } from '../../components/common/Modal';
 import { MerchantLedgerModal } from '../../components/merchants/MerchantLedgerModal';
+import { getErrorMessage } from '../../utils/errorHandler';
 import { 
   Store, 
   Plus, 
@@ -158,7 +159,7 @@ export const MerchantsPage: React.FC = () => {
       resetForm();
       loadData();
     } catch (err: any) {
-      showToast('error', isRTL ? 'خطأ في إضافة المتجر' : 'Error adding merchant', err.message);
+      showToast('error', isRTL ? 'خطأ في إضافة المتجر' : 'Error adding merchant', getErrorMessage(err));
     }
   };
 
@@ -184,7 +185,7 @@ export const MerchantsPage: React.FC = () => {
       resetForm();
       loadData();
     } catch (err: any) {
-      showToast('error', isRTL ? 'خطأ في التعديل' : 'Error updating', err.message);
+      showToast('error', isRTL ? 'خطأ في التعديل' : 'Error updating', getErrorMessage(err));
     }
   };
 
@@ -198,7 +199,7 @@ export const MerchantsPage: React.FC = () => {
       setCurrentMerchant(null);
       loadData();
     } catch (err: any) {
-      showToast('error', isRTL ? 'تعذر الحذف' : 'Deletion error', err.message);
+      showToast('error', isRTL ? 'تعذر الحذف' : 'Deletion error', getErrorMessage(err));
     }
   };
 

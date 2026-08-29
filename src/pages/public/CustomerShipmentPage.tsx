@@ -807,7 +807,7 @@ export const CustomerShipmentPage: React.FC<CustomerShipmentPageProps> = ({ toke
 
             {shipment.company?.phone && (
               <a
-                href={`https://wa.me/2${shipment.company.phone.replace(/[^0-9]/g, '')}`}
+                href={`https://wa.me/2${String(shipment.company.phone || '').replace(/[^0-9]/g, '')}`}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-xl text-xs font-bold transition shadow-2xs"

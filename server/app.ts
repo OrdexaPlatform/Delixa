@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import { setupSuperAdminRoutes } from './superAdminRoutes';
+import { hashPassword } from './crypto';
 
 dotenv.config();
 
@@ -127,14 +128,23 @@ export function createExpressApp(): express.Express {
         auth: { persistSession: false, autoRefreshToken: false },
       });
 
-      // 1. Fetch Order by confirmation_token
-      const { data: order, error: orderError } = await dbClient
+      // 1. Fetch Order by confirmation_token (or id if UUID)
+      let { data: order, error: orderError } = await dbClient
         .from('orders')
         .select('*')
         .eq('confirmation_token', rawToken)
         .maybeSingle();
 
-      if (orderError) {
+      if (!order && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawToken)) {
+        const { data: byId } = await dbClient
+          .from('orders')
+          .select('*')
+          .eq('id', rawToken)
+          .maybeSingle();
+        if (byId) order = byId;
+      }
+
+      if (orderError && !order) {
         console.error('Customer shipment fetch error:', orderError);
         return res.status(500).json({ success: false, code: 'SERVER_ERROR', error: 'حدث خطأ أثناء جلب بيانات الشحنة' });
       }
@@ -217,7 +227,11 @@ export function createExpressApp(): express.Express {
         auth: { persistSession: false, autoRefreshToken: false },
       });
 
-      const { data: order } = await dbClient.from('orders').select('*').eq('confirmation_token', rawToken).maybeSingle();
+      let { data: order } = await dbClient.from('orders').select('*').eq('confirmation_token', rawToken).maybeSingle();
+      if (!order && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawToken)) {
+        const { data: byId } = await dbClient.from('orders').select('*').eq('id', rawToken).maybeSingle();
+        if (byId) order = byId;
+      }
       if (!order) {
         return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'لم يتم العثور على الشحنة' });
       }
@@ -294,7 +308,11 @@ export function createExpressApp(): express.Express {
         auth: { persistSession: false, autoRefreshToken: false },
       });
 
-      const { data: order } = await dbClient.from('orders').select('*').eq('confirmation_token', rawToken).maybeSingle();
+      let { data: order } = await dbClient.from('orders').select('*').eq('confirmation_token', rawToken).maybeSingle();
+      if (!order && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawToken)) {
+        const { data: byId } = await dbClient.from('orders').select('*').eq('id', rawToken).maybeSingle();
+        if (byId) order = byId;
+      }
       if (!order) {
         return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'لم يتم العثور على الشحنة' });
       }
@@ -375,7 +393,11 @@ export function createExpressApp(): express.Express {
         auth: { persistSession: false, autoRefreshToken: false },
       });
 
-      const { data: order } = await dbClient.from('orders').select('*').eq('confirmation_token', rawToken).maybeSingle();
+      let { data: order } = await dbClient.from('orders').select('*').eq('confirmation_token', rawToken).maybeSingle();
+      if (!order && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawToken)) {
+        const { data: byId } = await dbClient.from('orders').select('*').eq('id', rawToken).maybeSingle();
+        if (byId) order = byId;
+      }
       if (!order) {
         return res.status(404).json({ success: false, code: 'NOT_FOUND', error: 'لم يتم العثور على الشحنة' });
       }
@@ -497,7 +519,7 @@ export function createExpressApp(): express.Express {
         });
       }
 
-      const { employee_id, full_name, phone, area, password, status } = req.body;
+      const { employee_id, full_name, phone, area, password, password_hash, status } = req.body;
 
       if (!employee_id || !full_name || !phone || !area) {
         return res.status(400).json({
@@ -629,13 +651,14 @@ export function createExpressApp(): express.Express {
         profileRecord = newProfile;
       }
 
-      const newCourierData = {
+      const newCourierData: Record<string, any> = {
         company_id: companyId,
         profile_id: profileRecord.id,
         employee_id: cleanEmpId,
         full_name: full_name.trim(),
         phone: phone.trim(),
         area: area.trim(),
+        password_hash: password_hash || (courierPassword ? hashPassword(courierPassword) : undefined),
         status: status || 'active',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),

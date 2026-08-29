@@ -5,6 +5,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { db } from '../../lib/db';
 import { Courier, CourierStatus, Order } from '../../types';
 import { Modal } from '../../components/common/Modal';
+import { getErrorMessage } from '../../utils/errorHandler';
 import { 
   Users, 
   Plus, 
@@ -161,7 +162,7 @@ export const CouriersPage: React.FC = () => {
       resetForm();
       loadData();
     } catch (err: any) {
-      showToast('error', isRTL ? 'تعذر إضافة المندوب' : 'Failed to add courier', err.message);
+      showToast('error', isRTL ? 'تعذر إضافة المندوب' : 'Failed to add courier', getErrorMessage(err));
     }
   };
 
@@ -183,7 +184,7 @@ export const CouriersPage: React.FC = () => {
       resetForm();
       loadData();
     } catch (err: any) {
-      showToast('error', isRTL ? 'خطأ في التعديل' : 'Update error', err.message);
+      showToast('error', isRTL ? 'خطأ في التعديل' : 'Update error', getErrorMessage(err));
     }
   };
 
@@ -205,7 +206,7 @@ export const CouriersPage: React.FC = () => {
       setIsResetPasswordModalOpen(false);
       loadData();
     } catch (err: any) {
-      showToast('error', isRTL ? 'تعذر تغيير كلمة المرور' : 'Failed to reset password', err.message);
+      showToast('error', isRTL ? 'تعذر تغيير كلمة المرور' : 'Failed to reset password', getErrorMessage(err));
     }
   };
 
@@ -219,7 +220,7 @@ export const CouriersPage: React.FC = () => {
       setCurrentCourier(null);
       loadData();
     } catch (err: any) {
-      showToast('error', isRTL ? 'تعذر الحذف' : 'Deletion error', err.message);
+      showToast('error', isRTL ? 'تعذر الحذف' : 'Deletion error', getErrorMessage(err));
     }
   };
 

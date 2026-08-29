@@ -27,6 +27,7 @@ import {
 import { hashPassword, verifyPassword, normalizeEmployeeId } from './crypto';
 import { demoDb, DEMO_COMPANY_ID } from './demoDb';
 import { safeFetchJson } from '../utils/apiClient';
+import { getErrorMessage } from '../utils/errorHandler';
 
 // Session Mode Control for clean data separation
 let currentSessionMode: SessionMode = 'production';
@@ -493,7 +494,7 @@ const supabaseDb = {
       const { data: sessData } = await supabase.auth.getSession();
       const token = sessData?.session?.access_token;
       if (token && typeof window !== 'undefined') {
-        const { ok, data: json } = await safeFetchJson<any>('/api/admin/create-courier', {
+        const { ok, data: json, error: fetchErr } = await safeFetchJson<any>('/api/admin/create-courier', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -505,6 +506,7 @@ const supabaseDb = {
             phone: data.phone.trim(),
             area: data.area.trim(),
             password: courierPassword,
+            password_hash: pwdHash,
             status: data.status || 'active',
           }),
         });
@@ -512,9 +514,16 @@ const supabaseDb = {
         if (ok && json?.success && json.courier) {
           notifyOrderUpdated();
           return json.courier as Courier;
+        } else if (json?.error) {
+          throw new Error(getErrorMessage(json.error, 'فشل إنشاء حساب المندوب'));
+        } else if (fetchErr && !fetchErr.includes('404')) {
+          throw new Error(getErrorMessage(fetchErr, 'فشل إنشاء حساب المندوب'));
         }
       }
-    } catch (serverErr) {
+    } catch (serverErr: any) {
+      if (serverErr.message && !serverErr.message.includes('fetch') && !serverErr.message.includes('404')) {
+        throw serverErr;
+      }
       console.warn('Backend create-courier endpoint notice (using direct Supabase Auth client):', serverErr);
     }
 
@@ -552,7 +561,7 @@ const supabaseDb = {
     if (authError && !authData?.user) {
       // If user already exists in auth
       if (!authError.message?.includes('already registered')) {
-        throw new Error(authError.message || 'فشل إنشاء حساب المصادقة للمندوب في Supabase Auth');
+        throw new Error(getErrorMessage(authError.message, 'فشل إنشاء حساب المصادقة للمندوب في Supabase Auth'));
       }
     }
 
@@ -589,7 +598,7 @@ const supabaseDb = {
 
     const { data: created, error } = await supabase.from('couriers').insert([newCourier]).select().single();
     if (error) {
-      throw new Error(error.message || 'فشل حفظ المندوب في قاعدة البيانات');
+      throw new Error(getErrorMessage(error.message, 'فشل حفظ المندوب في قاعدة البيانات'));
     }
     notifyOrderUpdated();
     return created as Courier;
@@ -882,8 +891,26 @@ const supabaseDb = {
   async getOrderByToken(token: string): Promise<{ order: Order; merchant?: Merchant | null; company?: Company | null } | null> {
     if (!token || !token.trim()) return null;
     const cleanToken = token.trim();
-    const { data: order, error } = await supabase.from('orders').select('*').eq('confirmation_token', cleanToken).single();
-    if (error || !order) return null;
+    let order: any = null;
+
+    const { data: byToken } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('confirmation_token', cleanToken)
+      .maybeSingle();
+
+    if (byToken) {
+      order = byToken;
+    } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanToken)) {
+      const { data: byId } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', cleanToken)
+        .maybeSingle();
+      if (byId) order = byId;
+    }
+
+    if (!order) return null;
 
     const [compRes, merchRes] = await Promise.all([
       supabase.from('companies').select('*').eq('id', order.company_id).maybeSingle(),
@@ -1863,15 +1890,43 @@ const supabaseDb = {
       query = query.eq('courier_id', courierId);
     }
     const { data, error } = await query;
-    if (error) return [];
-    return (data || []) as CourierSettlement[];
+    if (error) {
+      console.warn('Settlements query notice:', error.message);
+      return [];
+    }
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      company_id: row.company_id,
+      courier_id: row.courier_id,
+      settlement_number: row.settlement_number || '',
+      expected_amount: Number(row.expected_amount ?? row.total_amount ?? 0),
+      received_amount: Number(row.received_amount ?? row.total_amount ?? row.amount ?? 0),
+      remaining_amount: Number(row.remaining_amount ?? 0),
+      settled_by: row.settled_by || '',
+      settled_by_profile_id: row.settled_by_profile_id,
+      notes: row.notes || undefined,
+      created_at: row.created_at || new Date().toISOString(),
+    })) as CourierSettlement[];
   },
 
   async getSettlementById(companyId: string, id: string): Promise<CourierSettlement | null> {
     if (!companyId || !id) return null;
-    const { data, error } = await supabase.from('courier_settlements').select('*').eq('id', id).eq('company_id', companyId).single();
-    if (error) return null;
-    return data as CourierSettlement;
+    const { data, error } = await supabase.from('courier_settlements').select('*').eq('id', id).eq('company_id', companyId).maybeSingle();
+    if (error || !data) return null;
+    const row = data as any;
+    return {
+      id: row.id,
+      company_id: row.company_id,
+      courier_id: row.courier_id,
+      settlement_number: row.settlement_number || '',
+      expected_amount: Number(row.expected_amount ?? row.total_amount ?? 0),
+      received_amount: Number(row.received_amount ?? row.total_amount ?? row.amount ?? 0),
+      remaining_amount: Number(row.remaining_amount ?? 0),
+      settled_by: row.settled_by || '',
+      settled_by_profile_id: row.settled_by_profile_id,
+      notes: row.notes || undefined,
+      created_at: row.created_at || new Date().toISOString(),
+    } as CourierSettlement;
   },
 
   async getNextSettlementNumber(companyId: string): Promise<string> {
@@ -1892,7 +1947,7 @@ const supabaseDb = {
 
     const deliveredCodOrders = orders.filter(o => o.status === 'delivered');
     const totalDeliveredCod = deliveredCodOrders.reduce((sum, o) => sum + (Number(o.cod_amount) || 0), 0);
-    const totalSettledAmount = settlements.reduce((sum, s) => sum + (Number((s as any).total_amount || s.received_amount) || 0), 0);
+    const totalSettledAmount = settlements.reduce((sum, s) => sum + (Number(s.received_amount ?? (s as any).total_amount) || 0), 0);
     const currentOutstandingBalance = Math.max(0, totalDeliveredCod - totalSettledAmount);
     const lastSettlementDate = settlements.length > 0 ? settlements[0].created_at : null;
 
@@ -1947,32 +2002,44 @@ const supabaseDb = {
     }
 
     const settlementNumber = await this.getNextSettlementNumber(companyId);
+    let created: any = null;
 
-    const newSettlement: Record<string, any> = {
+    // Use only columns known to exist in the live database schema
+    const minimalPayload: Record<string, any> = {
       company_id: companyId,
       courier_id: data.courier_id,
       settlement_number: settlementNumber,
-      total_amount: received,
-      orders_count: summary.delivered_cod_orders_count,
+      expected_amount: summary.current_outstanding_balance,
+      received_amount: received,
+      remaining_amount: Math.max(0, summary.current_outstanding_balance - received),
       notes: data.notes?.trim() || null,
       settled_by: data.settled_by,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: new Date().toISOString()
     };
 
-    let created: any = null;
-    const { data: resData, error } = await supabase.from('courier_settlements').insert([newSettlement]).select().single();
-    if (error) {
-      if (error.message?.includes('orders_count') || error.message?.includes('schema cache')) {
-        const { orders_count, ...safeSettlement } = newSettlement;
-        const retryRes = await supabase.from('courier_settlements').insert([safeSettlement]).select().single();
-        if (retryRes.error) throw new Error(retryRes.error.message || 'فشل تسجيل التسوية في قاعدة البيانات');
-        created = retryRes.data;
-      } else {
-        throw new Error(error.message || 'فشل تسجيل التسوية في قاعدة البيانات');
-      }
+    const res1 = await supabase.from('courier_settlements').insert([minimalPayload]).select().single();
+    
+    if (!res1.error) {
+      created = res1.data;
     } else {
-      created = resData;
+      // Fallback for extremely legacy schemas that only have total_amount and missing others
+      const legacyPayload: Record<string, any> = {
+        company_id: companyId,
+        courier_id: data.courier_id,
+        settlement_number: settlementNumber,
+        total_amount: received,
+        orders_count: summary.delivered_cod_orders_count,
+        notes: data.notes?.trim() || null,
+        settled_by: data.settled_by,
+        created_at: new Date().toISOString()
+      };
+      
+      const res2 = await supabase.from('courier_settlements').insert([legacyPayload]).select().single();
+      if (!res2.error) {
+        created = res2.data;
+      } else {
+        throw new Error(getErrorMessage(res1.error, 'فشل تسجيل التسوية في قاعدة البيانات'));
+      }
     }
 
     notifyOrderUpdated();
@@ -2084,31 +2151,46 @@ const supabaseDb = {
     const settlementNumber = await this.getNextMerchantSettlementNumber(companyId);
     const amount = Number(data.amount) || 0;
 
-    const newSet: Record<string, any> = {
+    const minimalSet: Record<string, any> = {
       company_id: companyId,
       merchant_id: data.merchant_id,
       settlement_number: settlementNumber,
+      settlement_type: data.settlementType,
       type: data.settlementType,
       amount,
-      net_paid_amount: amount,
+      paid_amount: amount,
       payment_method: data.payment_method || 'cash',
       notes: data.notes?.trim() || null,
       settled_by: data.settled_by,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: new Date().toISOString()
     };
 
     let created: any = null;
-    const { data: resData, error } = await supabase.from('merchant_settlements').insert([newSet]).select().single();
+    const { data: resData, error } = await supabase.from('merchant_settlements').insert([minimalSet]).select().single();
+    
     if (error) {
-      if (error.message?.includes('net_paid_amount') || error.message?.includes('schema cache')) {
-        const { net_paid_amount, ...safeSet } = newSet;
-        const retryRes = await supabase.from('merchant_settlements').insert([safeSet]).select().single();
-        if (retryRes.error) throw new Error(retryRes.error.message || 'فشل حفظ تسوية التاجر');
-        created = retryRes.data;
-      } else {
-        throw new Error(error.message || 'فشل حفظ تسوية التاجر');
+      // Fallback for extremely legacy schemas that had total_cod, total_shipping_fees, net_paid_amount
+      const legacySet: Record<string, any> = {
+        company_id: companyId,
+        merchant_id: data.merchant_id,
+        settlement_number: settlementNumber,
+        type: data.settlementType,
+        amount,
+        total_cod: amount,
+        total_shipping_fees: 0,
+        total_return_costs: 0,
+        net_paid_amount: amount,
+        payment_method: data.payment_method || 'cash',
+        notes: data.notes?.trim() || null,
+        settled_by: data.settled_by,
+        created_at: new Date().toISOString()
+      };
+      
+      const retryRes = await supabase.from('merchant_settlements').insert([legacySet]).select().single();
+      if (retryRes.error) {
+        throw new Error(getErrorMessage(error, 'فشل حفظ تسوية التاجر'));
       }
+      created = retryRes.data;
     } else {
       created = resData;
     }

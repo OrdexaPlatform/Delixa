@@ -269,14 +269,28 @@ CREATE TABLE IF NOT EXISTS public.courier_settlements (
     company_id UUID NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
     courier_id UUID NOT NULL REFERENCES public.couriers(id) ON DELETE CASCADE,
     settlement_number VARCHAR(100) NOT NULL,
-    total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00 CHECK (total_amount >= 0),
+    total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    received_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    expected_amount NUMERIC(12, 2) DEFAULT 0.00,
+    remaining_amount NUMERIC(12, 2) DEFAULT 0.00,
     orders_count INTEGER NOT NULL DEFAULT 0,
-    notes TEXT,
     settled_by VARCHAR(255) NOT NULL,
+    settled_by_profile_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    notes TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     CONSTRAINT uq_company_courier_settlement_number UNIQUE (company_id, settlement_number)
 );
+
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS received_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS expected_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS remaining_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS orders_count INTEGER DEFAULT 0;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS settled_by VARCHAR(255);
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS settled_by_profile_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL;
+ALTER TABLE public.courier_settlements ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
 
 -- 10. MERCHANT TRANSACTIONS TABLE
 CREATE TABLE IF NOT EXISTS public.merchant_transactions (
@@ -298,19 +312,48 @@ CREATE TABLE IF NOT EXISTS public.merchant_settlements (
     company_id UUID NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
     merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
     settlement_number VARCHAR(100) NOT NULL,
-    type VARCHAR(50) NOT NULL, -- 'payout_to_merchant', 'collection_from_merchant'
+    type VARCHAR(50) NOT NULL DEFAULT 'payout_to_merchant', -- 'payout_to_merchant', 'collection_from_merchant', 'debt_collection', 'net_settlement'
+    settlement_type VARCHAR(50),
     amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
     total_cod NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
     total_shipping_fees NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    deducted_shipping_fees NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
     total_return_costs NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
     net_paid_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    net_payout NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    expected_amount NUMERIC(12, 2) DEFAULT 0.00,
+    paid_amount NUMERIC(12, 2) DEFAULT 0.00,
+    remaining_amount NUMERIC(12, 2) DEFAULT 0.00,
+    orders_count INTEGER DEFAULT 0,
     payment_method VARCHAR(50) DEFAULT 'cash',
     notes TEXT,
     settled_by VARCHAR(255) NOT NULL,
+    settled_by_profile_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     CONSTRAINT uq_company_merchant_settlement_number UNIQUE (company_id, settlement_number)
 );
+
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS type VARCHAR(50) DEFAULT 'payout_to_merchant';
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS settlement_type VARCHAR(50);
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS net_paid_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS net_payout NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS expected_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS remaining_amount NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS total_cod NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS total_shipping_fees NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS deducted_shipping_fees NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS total_return_costs NUMERIC(12, 2) DEFAULT 0.00;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS orders_count INTEGER DEFAULT 0;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT 'cash';
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS settled_by VARCHAR(255);
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS settled_by_profile_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL;
+ALTER TABLE public.merchant_settlements ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
 
 -- INDEXES
 CREATE INDEX IF NOT EXISTS idx_profiles_auth_user_id ON public.profiles(auth_user_id);
